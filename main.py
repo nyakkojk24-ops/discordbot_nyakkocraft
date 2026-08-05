@@ -17,10 +17,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 @bot.command()
 async def fish(ctx):
     base_dir = os.path.dirname(__file__)
-    json_path = os.path.join(base_dir, "fishes.json")
+    json_path = os.path.join(base_dir, "jsonall", "fishes.json")
     # ① 全魚のデータをロード
     with open(json_path, "r", encoding="utf-8") as f:
-        all_fishes = json.load(f)   
+        all_fishes = json.load(f)  
 
     # ② 魚の名前のリスト ["マグロ", "アジ"] を作成
     fish_names = list(all_fishes.keys())
