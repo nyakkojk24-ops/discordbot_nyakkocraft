@@ -556,6 +556,64 @@ class CookingView(discord.ui.View):
             )
             await interaction.response.send_modal(modal)
 
+# --------------------------------------------------
+# 🐟 40cm以下の場合のキープ / リリース選択画面
+# --------------------------------------------------
+class CatchOrReleaseView(discord.ui.View):
+    def __init__(
+        self, author, fish_name, size, comment, is_new_record, users_data
+    ):
+        super().__init__(timeout=30)
+        self.author = author
+        self.fish_name = fish_name
+        self.size = size
+        self.comment = comment
+        self.is_new_record = is_new_record
+        self.users_data = users_data
+
+    @discord.ui.button(
+        label="📦 持ち帰る", style=discord.ButtonStyle.primary
+    )
+    async def keep_fish(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        if interaction.user.id != self.author.id:
+            return
+
+        user_id = str(self.author.id)
+        inventory = self.users_data[user_id]["inventory"]
+
+        if self.fish_name not in inventory:
+            inventory[self.fish_name] = {"count": 0, "max_size": 0}
+
+        inventory[self.fish_name]["count"] += 1
+        if self.size > inventory[self.fish_name]["max_size"]:
+            inventory[self.fish_name]["max_size"] = self.size
+
+        save_user_data(self.users_data)
+
+        record_text = " 👑 **自己ベスト更新！**" if self.is_new_record else ""
+        msg = (
+            f"📦 **{self.fish_name}（{self.size}cm）** を持ち帰りました！{record_text}\n"
+            f"（通算: {inventory[self.fish_name]['count']}匹 / 最大: {inventory[self.fish_name]['max_size']}cm）"
+        )
+        self.stop()
+        await interaction.response.edit_message(content=msg, view=None)
+
+    @discord.ui.button(
+        label="🌊 逃がす（リリース）",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def release_fish(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        if interaction.user.id != self.author.id:
+            return
+
+        msg = f"🌊 **{self.fish_name}（{self.size}cm）** を海に逃がしてあげた！「大きくなって戻ってこいよ〜！」"
+        self.stop()
+        await interaction.response.edit_message(content=msg, view=None)
+
 
 # --------------------------------------------------
 # 🤖 BOTコマンド群
@@ -606,24 +664,45 @@ async def fish(ctx):
 
     inventory = users_data[user_id]["inventory"]
 
-    if chosen_name not in inventory:
-        inventory[chosen_name] = {"count": 0, "max_size": 0}
+    # 自己ベスト更新判定（記録用）
+    current_max = inventory.get(chosen_name, {}).get("max_size", 0)
+    is_new_record = size > current_max
 
-    inventory[chosen_name]["count"] += 1
+    # 🌟 40cm以下の場合は選択ボタンを出す！
+    if size <= 40:
+        view = CatchOrReleaseView(
+            author=ctx.author,
+            fish_name=chosen_name,
+            size=size,
+            comment=comment,
+            is_new_record=is_new_record,
+            users_data=users_data,
+        )
+        await ctx.send(
+            f"🎣 **{chosen_name}（{size}cm）** が釣れた！\n"
+            f"{comment}\n"
+            f"⚠️ **40cm以下の小魚です！どうする？**",
+            view=view,
+        )
 
-    is_new_record = False
-    if size > inventory[chosen_name]["max_size"]:
-        inventory[chosen_name]["max_size"] = size
-        is_new_record = True
+    # 40cm超えの場合はそのまま自動持ち帰り！
+    else:
+        if chosen_name not in inventory:
+            inventory[chosen_name] = {"count": 0, "max_size": 0}
 
-    save_user_data(users_data)
+        inventory[chosen_name]["count"] += 1
+        if is_new_record:
+            inventory[chosen_name]["max_size"] = size
 
-    record_text = " 👑 **自己ベスト更新！**" if is_new_record else ""
-    await ctx.send(
-        f"🎣 **{chosen_name}（{size}cm）** を釣り上げた！{record_text}\n"
-        f"{comment}\n"
-        f"📦（通算: {inventory[chosen_name]['count']}匹 / 最大: {inventory[chosen_name]['max_size']}cm）"
-    )
+        save_user_data(users_data)
+
+        record_text = " 👑 **自己ベスト更新！**" if is_new_record else ""
+        await ctx.send(
+            f"🎣 **{chosen_name}（{size}cm）** を釣り上げた！{record_text}\n"
+            f"{comment}\n"
+            f"📦（通算: {inventory[chosen_name]['count']}匹 / 最大: {inventory[chosen_name]['max_size']}cm）"
+        )
+
 
 
 # 3. 料理コマンド
