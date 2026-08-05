@@ -40,44 +40,88 @@ def save_user_data(data):
     with open(users_json_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+
 @bot.command()
 async def fish(ctx):
+    # ① 魚のマスタデータをロード
     json_path = os.path.join(base_dir, "jsonall", "fishes.json")
     with open(json_path, "r", encoding="utf-8") as f:
         all_fishes = json.load(f)
 
+    # ② 魚とサイズを決定
     fish_names = list(all_fishes.keys())
     chosen_name = random.choice(fish_names)
     fish_data = all_fishes[chosen_name]
     size = random.randint(fish_data["min_size"], fish_data["max_size"])
 
+    # ③ コメント取得
     comment = "コメントが見つかりませんでした"
     for item in fish_data["comments"]:
         if item["min"] <= size <= item["max"]:
             comment = item["text"]
             break
 
-    user_id = str(ctx.author.id)  # コマンドを打った人のDiscord ID
-    users_data = load_user_data()  # 今の全ユーザーデータを取得
+    # ④ ユーザーデータの更新
+    user_id = str(ctx.author.id)
+    users_data = load_user_data()
 
-    # 初めてコマンドを打った人なら初期化
     if user_id not in users_data:
         users_data[user_id] = {"name": ctx.author.name, "inventory": {}}
 
-    # インベントリを取得
     inventory = users_data[user_id]["inventory"]
 
-    # すでに持っている魚なら +1、持ってないなら 1 個にする
-    inventory[chosen_name] = inventory.get(chosen_name, 0) + 1
+    # 初めて釣る魚の場合の初期化
+    if chosen_name not in inventory:
+        inventory[chosen_name] = {"count": 0, "max_size": 0}
 
-    # 最新データをファイルに保存！
+    # 個数を+1
+    inventory[chosen_name]["count"] += 1
+
+    # 自己ベスト更新判定！
+    is_new_record = False
+    if size > inventory[chosen_name]["max_size"]:
+        inventory[chosen_name]["max_size"] = size
+        is_new_record = True
+
+    # 保存
     save_user_data(users_data)
 
-    count = inventory[chosen_name]
+    # メッセージの組み立て
+    record_text = " 👑 **自己ベスト更新！**" if is_new_record else ""
     await ctx.send(
-        f"🎣 **{chosen_name}（{size}cm）** を釣り上げた！\n"
+        f"🎣 **{chosen_name}（{size}cm）** を釣り上げた！{record_text}\n"
         f"{comment}\n"
-        f"📦（現在の所持数: {count}匹）"
+        f"📦（通算: {inventory[chosen_name]['count']}匹 / 最大: {inventory[chosen_name]['max_size']}cm）"
     )
+@bot.command(aliases=["inv", "bag"])
+async def inventory(ctx):
+    """自分の所持している魚と最高記録を表示する"""
+    user_id = str(ctx.author.id)
+    users_data = load_user_data()
+
+    # データが無い、またはインベントリが空の場合
+    if (
+        user_id not in users_data
+        or not users_data[user_id].get("inventory")
+    ):
+        await ctx.send(
+            f"📦 **{ctx.author.display_name}** さんのバッグは空っぽです！`!fish` で魚を釣りましょう！"
+        )
+        return
+
+    user_inventory = users_data[user_id]["inventory"]
+
+    # 表示用テキストの組み立て
+    msg = f"📦 **{ctx.author.display_name} さんの魚バッグ・図鑑** 📦\n"
+    msg += "───────────────────\n"
+
+    for fish_name, data in user_inventory.items():
+        count = data.get("count", 0)
+        max_size = data.get("max_size", 0)
+        msg += f"🐟 **{fish_name}**: {count}匹 （最大: {max_size}cm）\n"
+
+    msg += "───────────────────"
+
+    await ctx.send(msg)
 
 bot.run(TOKEN)
