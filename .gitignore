@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# 環境変数・秘密情報
+.env
+
+# 非公開にしたいデータファイル
+fishes.json
+
