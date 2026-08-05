@@ -41,87 +41,79 @@ def save_user_data(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-@bot.command()
-async def fish(ctx):
-    # ① 魚のマスタデータをロード
-    json_path = os.path.join(base_dir, "jsonall", "fishes.json")
-    with open(json_path, "r", encoding="utf-8") as f:
-        all_fishes = json.load(f)
+class InventoryView(discord.ui.View):
 
-    # ② 魚とサイズを決定
-    fish_names = list(all_fishes.keys())
-    chosen_name = random.choice(fish_names)
-    fish_data = all_fishes[chosen_name]
-    size = random.randint(fish_data["min_size"], fish_data["max_size"])
+    def __init__(self, author, user_inventory):
+        super().__init__(timeout=60)  # 60秒でボタンを無効化する
+        self.author = author
+        self.user_inventory = user_inventory
 
-    # ③ コメント取得
-    comment = "コメントが見つかりませんでした"
-    for item in fish_data["comments"]:
-        if item["min"] <= size <= item["max"]:
-            comment = item["text"]
-            break
-
-    # ④ ユーザーデータの更新
-    user_id = str(ctx.author.id)
-    users_data = load_user_data()
-
-    if user_id not in users_data:
-        users_data[user_id] = {"name": ctx.author.name, "inventory": {}}
-
-    inventory = users_data[user_id]["inventory"]
-
-    # 初めて釣る魚の場合の初期化
-    if chosen_name not in inventory:
-        inventory[chosen_name] = {"count": 0, "max_size": 0}
-
-    # 個数を+1
-    inventory[chosen_name]["count"] += 1
-
-    # 自己ベスト更新判定！
-    is_new_record = False
-    if size > inventory[chosen_name]["max_size"]:
-        inventory[chosen_name]["max_size"] = size
-        is_new_record = True
-
-    # 保存
-    save_user_data(users_data)
-
-    # メッセージの組み立て
-    record_text = " 👑 **自己ベスト更新！**" if is_new_record else ""
-    await ctx.send(
-        f"🎣 **{chosen_name}（{size}cm）** を釣り上げた！{record_text}\n"
-        f"{comment}\n"
-        f"📦（通算: {inventory[chosen_name]['count']}匹 / 最大: {inventory[chosen_name]['max_size']}cm）"
+    # 1つ目のボタン：魚の一覧
+    @discord.ui.button(
+        label="🐟 魚一覧", style=discord.ButtonStyle.primary
     )
+    async def show_fishes(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        # ボタンを押した人がコマンド実行者本人かチェック
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message(
+                "他の人のインベントリは操作できません！", ephemeral=True
+            )
+            return
+
+        # 魚一覧のテキストを作成
+        msg = f"📦 **{self.author.display_name} さんの魚バッグ** 📦\n"
+        msg += "───────────────────\n"
+
+        if not self.user_inventory:
+            msg += "魚を持っていません！\n"
+        else:
+            for fish_name, data in self.user_inventory.items():
+                count = data.get("count", 0)
+                max_size = data.get("max_size", 0)
+                msg += f"🐟 **{fish_name}**: {count}匹 （最大: {max_size}cm）\n"
+
+        msg += "───────────────────"
+
+        # メッセージを更新！
+        await interaction.response.edit_message(content=msg, view=self)
+
+    # 2つ目のボタン：料理一覧（将来の準備！）
+    @discord.ui.button(
+        label="🍳 料理一覧", style=discord.ButtonStyle.secondary
+    )
+    async def show_dishes(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message(
+                "他の人のインベントリは操作できません！", ephemeral=True
+            )
+            return
+
+        msg = f"🍳 **{self.author.display_name} さんの料理バッグ** 🍳\n"
+        msg += "───────────────────\n"
+        msg += "まだ料理を持っていません！（次回実装予定！）\n"
+        msg += "───────────────────"
+
+        await interaction.response.edit_message(content=msg, view=self)
+
+
+# --------------------------------------------------
+# 📦 インベントリ確認コマンド
+# --------------------------------------------------
 @bot.command(aliases=["inv", "bag"])
 async def inventory(ctx):
-    """自分の所持している魚と最高記録を表示する"""
     user_id = str(ctx.author.id)
     users_data = load_user_data()
 
-    # データが無い、またはインベントリが空の場合
-    if (
-        user_id not in users_data
-        or not users_data[user_id].get("inventory")
-    ):
-        await ctx.send(
-            f"📦 **{ctx.author.display_name}** さんのバッグは空っぽです！`!fish` で魚を釣りましょう！"
-        )
-        return
+    user_inventory = users_data.get(user_id, {}).get("inventory", {})
 
-    user_inventory = users_data[user_id]["inventory"]
+    # 最初に見せる画面（初期表示）
+    msg = f"📦 **{ctx.author.display_name} さんのインベントリ** 📦\n"
+    msg += "下のボタンを押して「魚一覧」や「料理一覧」に切り替えられます！"
 
-    # 表示用テキストの組み立て
-    msg = f"📦 **{ctx.author.display_name} さんの魚バッグ・図鑑** 📦\n"
-    msg += "───────────────────\n"
-
-    for fish_name, data in user_inventory.items():
-        count = data.get("count", 0)
-        max_size = data.get("max_size", 0)
-        msg += f"🐟 **{fish_name}**: {count}匹 （最大: {max_size}cm）\n"
-
-    msg += "───────────────────"
-
-    await ctx.send(msg)
-
-bot.run(TOKEN)
+    # View（ボタン群）を生成してメッセージと一緒に送信！
+    view = InventoryView(author=ctx.author, user_inventory=user_inventory)
+    await ctx.send(msg, view=view)
