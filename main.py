@@ -62,10 +62,6 @@ def save_user_data(data):
 # --------------------------------------------------
 
 
-# ① インベントリ画面（魚・料理一覧）
-# --------------------------------------------------
-# 📢 VCにお披露目するための選択画面
-# --------------------------------------------------
 class ShowItemSelectView(discord.ui.View):
 
     def __init__(self, author, user_data):
@@ -78,9 +74,10 @@ class ShowItemSelectView(discord.ui.View):
 
         options = []
 
-        # 魚をお披露目対象に追加
+        # 魚をお披露目対象に追加（sizes の長さで判定）
         for fish_name, data in inventory.items():
-            if data.get("count", 0) > 0:
+            sizes = data.get("sizes", [])
+            if len(sizes) > 0:
                 max_size = data.get("max_size", 0)
                 options.append(
                     discord.SelectOption(
@@ -104,7 +101,7 @@ class ShowItemSelectView(discord.ui.View):
         if options:
             select = discord.ui.Select(
                 placeholder="📢 お披露目したいアイテムを選んでください",
-                options=options[:25],  # Selectの最大数は25個
+                options=options[:25],
             )
             select.callback = self.on_select_item
             self.add_item(select)
@@ -113,7 +110,6 @@ class ShowItemSelectView(discord.ui.View):
         if interaction.user.id != self.author.id:
             return
 
-        # VCに入っているか確認
         voice_state = interaction.user.voice
         if not voice_state or not voice_state.channel:
             await interaction.response.send_message(
@@ -125,7 +121,6 @@ class ShowItemSelectView(discord.ui.View):
         vc_channel = voice_state.channel
         selected_val = interaction.data["values"][0]
 
-        # 送信する埋め込みメッセージ（Embed）の作成
         embed = discord.Embed(color=discord.Color.gold())
         embed.set_author(
             name=f"{self.author.display_name} さんの自慢の一品！",
@@ -136,23 +131,20 @@ class ShowItemSelectView(discord.ui.View):
             ),
         )
 
-        # 魚のお披露目
         if selected_val.startswith("fish_"):
             fish_name = selected_val.replace("fish_", "")
             fish_info = self.user_data["inventory"][fish_name]
             max_size = fish_info.get("max_size", 0)
-            count = fish_info.get("count", 0)
+            count = len(fish_info.get("sizes", []))
 
             embed.title = f"🐟 魚自慢: 『{fish_name}』"
-            embed.description = f"**最大サイズ: {max_size} cm** 👑\n（通算獲得数: {count} 匹）"
+            embed.description = f"**最大サイズ: {max_size} cm** 👑\n（現在所持数: {count} 匹）"
             embed.set_footer(text="🎣 釣りあげた自慢の記録！")
 
-        # 料理のお披露目
         elif selected_val.startswith("dish_"):
             dish_name = selected_val.replace("dish_", "")
             recipes = load_recipes()
 
-            # レシピ情報の検索
             author_name = "自作"
             appliance = "不明"
             ingredients = "不明"
@@ -173,7 +165,6 @@ class ShowItemSelectView(discord.ui.View):
             )
             embed.set_footer(text="✨ 特製料理をお披露目！")
 
-        # VCのテキストチャットへ送信！
         await vc_channel.send(embed=embed)
         await interaction.response.send_message(
             f"📢 **{vc_channel.name}** のチャットにお披露目しました！",
@@ -181,7 +172,7 @@ class ShowItemSelectView(discord.ui.View):
         )
 
 
-# ① インベントリ画面（ボタン追加版）
+# ① インベントリ画面（魚・料理一覧）
 class InventoryView(discord.ui.View):
 
     def __init__(self, author, user_data):
@@ -207,8 +198,11 @@ class InventoryView(discord.ui.View):
 
         has_item = False
         for fish_name, data in inventory.items():
-            count = data.get("count", 0)
+            # sizes リストの長さで所持数を判定！
+            sizes = data.get("sizes", [])
+            count = len(sizes)
             max_size = data.get("max_size", 0)
+
             if count > 0:
                 msg += f"🐟 **{fish_name}**: {count}匹 （最大: {max_size}cm）\n"
                 has_item = True
@@ -247,7 +241,6 @@ class InventoryView(discord.ui.View):
         msg += "───────────────────"
         await interaction.response.edit_message(content=msg, view=self)
 
-    # 🌟 新設：お披露目ボタン！
     @discord.ui.button(
         label="📢 VCにお披露目", style=discord.ButtonStyle.success, row=1
     )
@@ -260,7 +253,6 @@ class InventoryView(discord.ui.View):
             )
             return
 
-        # VCに入っているかチェック
         voice_state = interaction.user.voice
         if not voice_state or not voice_state.channel:
             await interaction.response.send_message(
@@ -560,6 +552,7 @@ class CookingView(discord.ui.View):
 # 🐟 40cm以下の場合のキープ / リリース選択画面
 # --------------------------------------------------
 class CatchOrReleaseView(discord.ui.View):
+
     def __init__(
         self, author, fish_name, size, comment, is_new_record, users_data
     ):
@@ -584,18 +577,25 @@ class CatchOrReleaseView(discord.ui.View):
         inventory = self.users_data[user_id]["inventory"]
 
         if self.fish_name not in inventory:
-            inventory[self.fish_name] = {"count": 0, "max_size": 0}
+            inventory[self.fish_name] = {"sizes": [], "max_size": 0}
 
-        inventory[self.fish_name]["count"] += 1
+        # 互換性維持（もし旧データで sizes が無ければ空リストで初期化）
+        if "sizes" not in inventory[self.fish_name]:
+            inventory[self.fish_name]["sizes"] = []
+
+        # サイズをリストに追加！
+        inventory[self.fish_name]["sizes"].append(self.size)
+
         if self.size > inventory[self.fish_name]["max_size"]:
             inventory[self.fish_name]["max_size"] = self.size
 
         save_user_data(self.users_data)
 
+        count = len(inventory[self.fish_name]["sizes"])
         record_text = " 👑 **自己ベスト更新！**" if self.is_new_record else ""
         msg = (
             f"📦 **{self.fish_name}（{self.size}cm）** を持ち帰りました！{record_text}\n"
-            f"（通算: {inventory[self.fish_name]['count']}匹 / 最大: {inventory[self.fish_name]['max_size']}cm）"
+            f"（所持数: {count}匹 / 最大記録: {inventory[self.fish_name]['max_size']}cm）"
         )
         self.stop()
         await interaction.response.edit_message(content=msg, view=None)
@@ -697,6 +697,8 @@ class SellView(discord.ui.View):
         ) 
 
 
+
+
 # --------------------------------------------------
 # 🤖 BOTコマンド群
 # --------------------------------------------------
@@ -740,17 +742,17 @@ async def fish(ctx):
     if user_id not in users_data:
         users_data[user_id] = {
             "name": ctx.author.name,
+            "coins": 100,  # 初期コイン
             "inventory": {},
             "dishes": {},
         }
 
     inventory = users_data[user_id]["inventory"]
 
-    # 自己ベスト更新判定（記録用）
     current_max = inventory.get(chosen_name, {}).get("max_size", 0)
     is_new_record = size > current_max
 
-    # 🌟 40cm以下の場合は選択ボタンを出す！
+    # 40cm以下の場合は選択ボタンを出す
     if size <= 40:
         view = CatchOrReleaseView(
             author=ctx.author,
@@ -767,22 +769,27 @@ async def fish(ctx):
             view=view,
         )
 
-    # 40cm超えの場合はそのまま自動持ち帰り！
+    # 40cm超えの場合はそのまま自動持ち帰り
     else:
         if chosen_name not in inventory:
-            inventory[chosen_name] = {"count": 0, "max_size": 0}
+            inventory[chosen_name] = {"sizes": [], "max_size": 0}
 
-        inventory[chosen_name]["count"] += 1
+        if "sizes" not in inventory[chosen_name]:
+            inventory[chosen_name]["sizes"] = []
+
+        inventory[chosen_name]["sizes"].append(size)
+
         if is_new_record:
             inventory[chosen_name]["max_size"] = size
 
         save_user_data(users_data)
 
+        count = len(inventory[chosen_name]["sizes"])
         record_text = " 👑 **自己ベスト更新！**" if is_new_record else ""
         await ctx.send(
             f"🎣 **{chosen_name}（{size}cm）** を釣り上げた！{record_text}\n"
             f"{comment}\n"
-            f"📦（通算: {inventory[chosen_name]['count']}匹 / 最大: {inventory[chosen_name]['max_size']}cm）"
+            f"📦（所持数: {count}匹 / 最大記録: {inventory[chosen_name]['max_size']}cm）"
         )
 
 
@@ -847,6 +854,94 @@ async def recipe_book(ctx):
 
 
 # --------------------------------------------------
+# 💰 魚の売却画面（View）
+# --------------------------------------------------
+class SellView(discord.ui.View):
+
+    def __init__(self, author, user_data, all_fishes):
+        super().__init__(timeout=60)
+        self.author = author
+        self.user_data = user_data
+        self.all_fishes = all_fishes
+
+        inventory = user_data.get("inventory", {})
+        options = []
+
+        # 魚ごとに、持っている個別のサイズを計算して選択肢に追加
+        for fish_name, data in inventory.items():
+            sizes = data.get("sizes", [])
+            if sizes and fish_name in all_fishes:
+                fish_master = all_fishes[fish_name]
+                base_price = fish_master.get("base_price", 100)
+                min_size = fish_master["min_size"]
+
+                # 個別のサイズごとに値段を計算
+                for idx, size in enumerate(sizes):
+                    extra_price = int((size - min_size) / 10) * 20
+                    price = base_price + extra_price
+
+                    # ドロップダウンで識別できるように value にインデックス(idx)を含める
+                    options.append(
+                        discord.SelectOption(
+                            label=f"🐟 {fish_name} ({size}cm)",
+                            value=f"{fish_name}_{idx}_{size}",
+                            description=f"売却価格: {price} NP",
+                        )
+                    )
+
+        if options:
+            select = discord.ui.Select(
+                placeholder="💰 売却したい魚（サイズ別）を選んでください",
+                options=options[:25],  # 最大25個まで
+            )
+            select.callback = self.on_select_sell
+            self.add_item(select)
+
+    async def on_select_sell(self, interaction: discord.Interaction):
+        if interaction.user.id != self.author.id:
+            return
+
+        # "マグロ_0_150" のような値から情報を分解
+        val_parts = interaction.data["values"][0].split("_")
+        chosen_fish = val_parts[0]
+        fish_idx = int(val_parts[1])
+        fish_size = int(val_parts[2])
+
+        users_data = load_user_data()
+        user_id = str(self.author.id)
+        user = users_data.get(user_id, {})
+        inventory = user.get("inventory", {})
+
+        sizes = inventory.get(chosen_fish, {}).get("sizes", [])
+
+        # 指定インデックスの魚がまだあるか確認
+        if fish_idx >= len(sizes) or sizes[fish_idx] != fish_size:
+            await interaction.response.send_message(
+                "その魚はすでに売却されたか、見つかりません！",
+                ephemeral=True,
+            )
+            return
+
+        # 価格計算
+        fish_master = self.all_fishes[chosen_fish]
+        base_price = fish_master.get("base_price", 100)
+        min_size = fish_master["min_size"]
+        extra_price = int((fish_size - min_size) / 10) * 20
+        unit_price = base_price + extra_price
+
+        # リストから指定の魚を1匹削除 & コイン（NP）付与
+        sizes.pop(fish_idx)
+        user["coins"] = user.get("coins", 0) + unit_price
+
+        save_user_data(users_data)
+
+        await interaction.response.send_message(
+            f"💸 **{chosen_fish}（{fish_size}cm）** を売却しました！\n"
+            f"💰 **+{unit_price} NP** 獲得！（現在の所持金: **{user['coins']} NP**）"
+        )
+
+
+# --------------------------------------------------
 # 💰 売却コマンド
 # --------------------------------------------------
 @bot.command(aliases=["sell", "売却"])
@@ -856,7 +951,7 @@ async def sell_item(ctx):
     user_data = users_data.get(user_id, {})
 
     inventory = user_data.get("inventory", {})
-    has_fish = any(data.get("count", 0) > 0 for data in inventory.values())
+    has_fish = any(len(data.get("sizes", [])) > 0 for data in inventory.values())
 
     if not has_fish:
         await ctx.send(
@@ -864,7 +959,6 @@ async def sell_item(ctx):
         )
         return
 
-    # 魚のマスタデータ取得
     json_path = os.path.join(base_dir, "jsonall", "fishes.json")
     with open(json_path, "r", encoding="utf-8") as f:
         all_fishes = json.load(f)
@@ -875,7 +969,7 @@ async def sell_item(ctx):
     )
     await ctx.send(
         f"🏧 **フィッシュマーケット**（現在の所持金: **{coins} NP**）\n"
-        f"最高記録のサイズが大きいほど高値で売れます！売却したい魚を選んでね！",
+        f"サイズが大きい魚ほど高額で引き取ります！売却したい魚を選んでね！",
         view=view,
     )
 
