@@ -1,5 +1,6 @@
 import json
 import os
+import datetime
 import random
 import discord
 from discord.ext import commands
@@ -72,6 +73,51 @@ def load_seafood():
         return {}
     with open(json_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def get_daily_quest(user_data):
+    today_str = datetime.date.today().isoformat()
+    quest_info = user_data.get("daily_quest", {})
+
+    # 1. 発見済みレシピ（recipes.json）を読み込む
+    recipes = load_recipes()  # 既存のレシピ読み込み関数
+    discovered_recipes = list(recipes.keys())
+
+    # 2. レシピが10種類未満の場合は「ロック状態」を返す
+    if len(discovered_recipes) < 10:
+        return {
+            "locked": True,
+            "count": len(discovered_recipes),
+            "needed": 10,
+        }
+
+    # 3. 10種類以上ある場合は、今日の日付でデイリークエストを生成
+    if quest_info.get("date") != today_str or quest_info.get("locked"):
+        # 今日の日付を固定シードにするか、ランダムに1つのレシピを選択
+        # ユーザーIDと日付を組み合わせることで「ユーザーごとに今日固定のレシピ」を選出
+        seed_value = f"{today_str}_{user_data.get('name', '')}"
+        rng = random.Random(seed_value)
+
+        target_recipe = rng.choice(discovered_recipes)
+        recipe_data = recipes[target_recipe]
+
+        # 報酬額の計算（食材数に応じたボーナスなどアレンジ可能！）
+        reward = 250
+
+        quest_info = {
+            "locked": False,
+            "date": today_str,
+            "completed": False,
+            "quest": {
+                "item": target_recipe,
+                "count": 1,
+                "reward_coins": reward,
+                "description": f"みんなが発見した『{target_recipe}』が食べたいにゃ！1個作って届けてほしいにゃ！",
+            },
+        }
+        user_data["daily_quest"] = quest_info
+
+    return quest_info
 
 
 
@@ -156,7 +202,8 @@ async def do_fish_logic_edit(
 
     chosen_name = random.choice(list(all_fishes.keys()))
     fish_data = all_fishes[chosen_name]
-    size = random.randint(fish_data["min_size"], fish_data["max_size"])
+    raw_size = random.uniform(fish_data["min_size"], fish_data["max_size"])
+    size = round(raw_size, 2)
 
     comment = "コメントが見つかりませんでした"
     for item in fish_data["comments"]:
@@ -182,7 +229,7 @@ async def do_fish_logic_edit(
         )
         await interaction.response.edit_message(
             content=(
-                f"🎣 **{chosen_name}（{size}cm）** が釣れた！\n"
+                f"🎣 **{chosen_name}（{size:.2f}cm）** が釣れた！\n"
                 f"{comment}\n"
                 f"🛠️ (釣竿残り耐久: {current_rod}){broke_text}\n"
                 f"⚠️ **40cm以下の小魚です！どうする？**"
@@ -206,9 +253,9 @@ async def do_fish_logic_edit(
 
         await interaction.response.edit_message(
             content=(
-                f"🎣 **{chosen_name}（{size}cm）** を釣り上げた！{record_text}\n"
+                f"🎣 **{chosen_name}（{size:.2f}cm）** を釣り上げた！{record_text}\n"
                 f"{comment}\n"
-                f"📦（所持数: {count}匹 / 最大記録: {inventory[chosen_name]['max_size']}cm）\n"
+                f"📦（所持数: {count}匹 / 最大記録: {inventory[chosen_name]['max_size']:.2f}cm) \n"
                 f"🛠️ **釣竿残り耐久:** `{current_rod}/10`{broke_text}\n\n"
                 f"👇 **続けて遊ぶ場合はボタンを押してね！**"
             ),
@@ -900,18 +947,26 @@ class CookingView(discord.ui.View):
 
 # 在庫チェック
         meats = user.get("meats", {})
+        seafood = user.get("seafood", {})  # 👈 🌟 追加！
         for item_name in self.selected_fishes:
             in_fish = item_name in inventory
             in_veggie = item_name in veggies
             in_seasoning = item_name in seasonings
-            in_meat = item_name in meats  # 👈 追加
+            in_meat = item_name in meats
+            in_seafood = item_name in seafood  # 👈 🌟 追加！
             in_dish = item_name in dishes
 
             if not (
-                in_fish or in_veggie or in_seasoning or in_meat or in_dish
+                in_fish
+                or in_veggie
+                or in_seasoning
+                or in_meat
+                or in_seafood  # 👈 🌟 条件に追加！
+                or in_dish
             ):
                 await interaction.response.send_message(
-                    f"❌ {item_name} の在庫がありません！", ephemeral=True
+                    f"❌ {item_name} の在庫がありません！",
+                    ephemeral=True,
                 )
                 return
 
@@ -929,10 +984,14 @@ class CookingView(discord.ui.View):
                 seasonings[item] -= 1
                 if seasonings[item] <= 0:
                     del seasonings[item]
-            elif meats.get(item, 0) > 0:  # 👈 お肉の消費処理を追加！
+            elif meats.get(item, 0) > 0:
                 meats[item] -= 1
                 if meats[item] <= 0:
                     del meats[item]
+            elif seafood.get(item, 0) > 0:  # 👈 🌟 海の幸の消費処理を追加！
+                seafood[item] -= 1
+                if seafood[item] <= 0:
+                    del seafood[item]
             elif dishes.get(item, 0) > 0:
                 dishes[item] -= 1
                 if dishes[item] <= 0:
@@ -1555,6 +1614,91 @@ class ShopView(discord.ui.View):
         self.stop()
         await interaction.message.delete()    
 
+
+# --------------------------------------------------
+# 📋 デイリークエスト View
+# --------------------------------------------------
+class QuestView(discord.ui.View):
+
+    def __init__(self, author, user_data):
+        super().__init__(timeout=60)
+        self.author = author
+        self.user_data = user_data
+
+    @discord.ui.button(
+        label="🎁 クエスト品を納品する",
+        style=discord.ButtonStyle.success,
+        row=0,
+    )
+    async def complete_quest(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message(
+                "他の人のクエスト画面は操作できません！", ephemeral=True
+            )
+            return
+
+        users_data = load_user_data()
+        user = users_data.get(str(self.author.id), {})
+        q_data = get_daily_quest(user)
+
+        if not q_data or q_data.get("locked"):
+            await interaction.response.send_message(
+                "⚠️ 現在進行可能なクエストがありません！", ephemeral=True
+            )
+            return
+
+        if q_data.get("completed"):
+            await interaction.response.send_message(
+                "✅ 本日のデイリークエストは既に達成済みです！また明日挑戦してね！",
+                ephemeral=True,
+            )
+            return
+
+        quest = q_data["quest"]
+        target_item = quest["item"]
+        req_count = quest.get("count", 1)
+        reward = quest.get("reward_coins", 250)
+
+        # 所持料理（dishes）のチェック
+        dishes = user.get("dishes", {})
+        if dishes.get(target_item, 0) < req_count:
+            await interaction.response.send_message(
+                f"❌ 納品に必要な **『{target_item}』** を持っていません！\n"
+                f"`/cook` で作ってからもう一度納品してね！",
+                ephemeral=True,
+            )
+            return
+
+        # 料理の消費
+        dishes[target_item] -= req_count
+        if dishes[target_item] <= 0:
+            del dishes[target_item]
+
+        # 報酬の付与とステータス更新
+        q_data["completed"] = True
+        user["coins"] = user.get("coins", 0) + reward
+        save_user_data(users_data)
+
+        await interaction.response.edit_message(
+            content=(
+                f"🎉 **デイリークエスト達成！**\n"
+                f"🐱 「『{target_item}』を届けてくれてありがとうにゃ！おいしかったにゃ！」\n\n"
+                f"💰 **報酬: +{reward} NP ゲット！**（現在の所持金: **{user['coins']} NP**）\n"
+                f"✨ また明日新しいお願いをチェックしてね！"
+            ),
+            view=DeleteMessageView(author=self.author),
+        )
+
+    @discord.ui.button(
+        label="❌ 閉じる", style=discord.ButtonStyle.secondary, row=0
+    )
+    async def btn_close(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await interaction.message.delete()
+
 # --------------------------------------------------
 # 🎮 メインメニュー View（上書き ＆ 閉じるボタン付き）
 # --------------------------------------------------
@@ -1691,6 +1835,54 @@ class MainMenuView(discord.ui.View):
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    @discord.ui.button(
+        label="📋 本日のリクエスト",
+        style=discord.ButtonStyle.primary,
+        row=1,
+    )
+    async def btn_quest(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        users_data = load_user_data()
+        user_data = users_data.get(str(self.author.id), {})
+        q_data = get_daily_quest(user_data)
+        save_user_data(users_data)
+
+        # 🔒 ロック中の表示分岐
+        if q_data.get("locked"):
+            msg = (
+                f"🔒 **デイリークエストはまだ解放されていません！**\n"
+                f"───────────────────\n"
+                f"🍳 みんなで発見したレシピ: **{q_data['count']} / {q_data['needed']} 種類**\n"
+                f"💬 「料理のレシピが **10種類** を超えると、にゃっこから日替わりのお願いが届くようになるにゃ！」\n"
+                f"👉 `/cook` で色々な食材や器具を試して、新しいレシピを発見しよう！\n"
+                f"───────────────────"
+            )
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        # 🔓 通常表示
+        quest = q_data["quest"]
+        status_text = (
+            "✅ **【達成済み】**"
+            if q_data["completed"]
+            else "⏳ **【挑戦中】**"
+        )
+
+        msg = (
+            f"📅 **本日の限定リクエスト**（{q_data['date']}）\n"
+            f"ステータス: {status_text}\n"
+            f"───────────────────\n"
+            f"💬 **にゃっこからの願い**: {quest['description']}\n"
+            f"🎯 **目標**: **{quest['item']}** × `{quest['count']}個` を納品\n"
+            f"💰 **報酬**: **{quest['reward_coins']} NP**\n"
+            f"───────────────────"
+        )
+        view = QuestView(author=self.author, user_data=user_data)
+        await interaction.response.send_message(
+            msg, view=view, ephemeral=True
+        )
+        
     # 🌟 3段目: 閉じるボタン（メッセージ削除）
     @discord.ui.button(
         label="❌ メニューを閉じる",
@@ -1968,7 +2160,7 @@ class SellView(discord.ui.View):
         save_user_data(users_data)
 
         await interaction.response.send_message(
-            f"💸 **{chosen_fish}（{fish_size}cm）** を売却しました！\n"
+            f"💸 **{chosen_fish}（{fish_size:.2f}cm）** を売却しました！\n"
             f"💰 **+{unit_price} NP** 獲得！（現在の所持金: **{user['coins']} NP**）"
         )
 
@@ -2205,5 +2397,56 @@ async def start_menu(ctx):
 
     view = MainMenuView(author=ctx.author)
     await ctx.send(embed=embed, view=view)
+
+
+@bot.hybrid_command(
+    name="quest",
+    aliases=["クエスト", "デイリー"],
+    description="本日のデイリーリクエストを確認・納品します",
+)
+async def quest_command(ctx):
+    user_id = str(ctx.author.id)
+    users_data = load_user_data()
+    user_data = users_data.get(user_id, {})
+
+    q_data = get_daily_quest(user_data)
+    save_user_data(users_data)
+
+    if not q_data:
+        await ctx.send("⚠️ クエストデータが読み込めませんでした！")
+        return
+
+    # 🔒 2. レシピが10種類未満（ロック中）の表示処理！
+    if q_data.get("locked"):
+        msg = (
+            f"🔒 **デイリークエストはまだ解放されていません！**\n"
+            f"───────────────────\n"
+            f"🍳 みんなで発見したレシピ: **{q_data['count']} / {q_data['needed']} 種類**\n"
+            f"💬 「料理のレシピが **10種類** を超えると、にゃっこから日替わりのお願いが届くようになるにゃ！」\n"
+            f"👉 `/cook` で色々な食材や器具を試して、新しいレシピを発見しよう！\n"
+            f"───────────────────"
+        )
+        view = DeleteMessageView(author=ctx.author)
+        await ctx.send(msg, view=view)
+        return
+
+    # 🔓 10種類以上ある場合の通常表示
+    quest = q_data["quest"]
+    status_text = (
+        "✅ **【達成済み】**" if q_data["completed"] else "⏳ **【挑戦中】**"
+    )
+
+    msg = (
+        f"📅 **本日の限定リクエスト**（{q_data['date']}）\n"
+        f"ステータス: {status_text}\n"
+        f"───────────────────\n"
+        f"💬 **にゃっこからの願い**: {quest['description']}\n"
+        f"🎯 **目標**: **{quest['item']}** × `{quest['count']}個` を納品\n"
+        f"💰 **報酬**: **{quest['reward_coins']} NP**\n"
+        f"───────────────────"
+    )
+
+    view = QuestView(author=ctx.author, user_data=user_data)
+    await ctx.send(msg, view=view)
 
 bot.run(TOKEN)
