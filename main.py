@@ -614,6 +614,88 @@ class CatchOrReleaseView(discord.ui.View):
         self.stop()
         await interaction.response.edit_message(content=msg, view=None)
 
+# --------------------------------------------------
+# 💰 魚・料理の売却画面（View）
+# --------------------------------------------------
+class SellView(discord.ui.View):
+
+    def __init__(self, author, user_data, all_fishes):
+        super().__init__(timeout=60)
+        self.author = author
+        self.user_data = user_data
+        self.all_fishes = all_fishes
+
+        inventory = user_data.get("inventory", {})
+        options = []
+
+        # 魚を売却選択肢に追加（サイズに応じて価格計算！）
+        for fish_name, data in inventory.items():
+            count = data.get("count", 0)
+            if count > 0 and fish_name in all_fishes:
+                fish_master = all_fishes[fish_name]
+                max_size = data.get("max_size", fish_master["min_size"])
+
+                # 価格計算ロジック
+                base_price = fish_master.get("base_price", 100)  # デフォルト100NP
+                min_size = fish_master["min_size"]
+                # 10cmごとに+20NP追加
+                extra_price = int((max_size - min_size) / 10) * 20
+                unit_price = base_price + extra_price
+
+                options.append(
+                    discord.SelectOption(
+                        label=f"🐟 {fish_name} (所持: {count}匹)",
+                        value=fish_name,
+                        description=f"最高記録 {max_size}cm 基準 ➔ 1匹 {unit_price} NP で売却",
+                    )
+                )
+
+        if options:
+            select = discord.ui.Select(
+                placeholder="💰 売却したい魚を選んでください（1匹ずつ売却）",
+                options=options[:25],
+            )
+            select.callback = self.on_select_sell
+            self.add_item(select)
+
+    async def on_select_sell(self, interaction: discord.Interaction):
+        if interaction.user.id != self.author.id:
+            return
+
+        chosen_fish = interaction.data["values"][0]
+
+        users_data = load_user_data()
+        user_id = str(self.author.id)
+        user = users_data.get(user_id, {})
+        inventory = user.get("inventory", {})
+
+        if inventory.get(chosen_fish, {}).get("count", 0) <= 0:
+            await interaction.response.send_message(
+                "その魚はもう持っていません！", ephemeral=True
+            )
+            return
+
+        # 売却価格の再計算
+        fish_master = self.all_fishes[chosen_fish]
+        max_size = inventory[chosen_fish].get(
+            "max_size", fish_master["min_size"]
+        )
+        base_price = fish_master.get("base_price", 100)
+        min_size = fish_master["min_size"]
+        extra_price = int((max_size - min_size) / 10) * 20
+        unit_price = base_price + extra_price
+
+        # 在庫を1減らし、NPを付与
+        inventory[chosen_fish]["count"] -= 1
+        user["coins"] = user.get("coins", 0) + unit_price
+
+        save_user_data(users_data)
+
+        await interaction.response.send_message(
+            f"💸 **{chosen_fish}（最大{max_size}cm記録）** を1匹売却しました！\n"
+            f"💰 **+{unit_price} NP** を獲得！（現在の所持金: **{user['coins']} NP**）"
+        ) 
+
 
 # --------------------------------------------------
 # 🤖 BOTコマンド群
@@ -762,6 +844,40 @@ async def recipe_book(ctx):
         )
     else:
         await ctx.send(msg)
+
+
+# --------------------------------------------------
+# 💰 売却コマンド
+# --------------------------------------------------
+@bot.command(aliases=["sell", "売却"])
+async def sell_item(ctx):
+    user_id = str(ctx.author.id)
+    users_data = load_user_data()
+    user_data = users_data.get(user_id, {})
+
+    inventory = user_data.get("inventory", {})
+    has_fish = any(data.get("count", 0) > 0 for data in inventory.values())
+
+    if not has_fish:
+        await ctx.send(
+            "💰 売れる魚を持っていません！まずは `!fish` で魚を釣りましょう！"
+        )
+        return
+
+    # 魚のマスタデータ取得
+    json_path = os.path.join(base_dir, "jsonall", "fishes.json")
+    with open(json_path, "r", encoding="utf-8") as f:
+        all_fishes = json.load(f)
+
+    coins = user_data.get("coins", 0)
+    view = SellView(
+        author=ctx.author, user_data=user_data, all_fishes=all_fishes
+    )
+    await ctx.send(
+        f"🏧 **フィッシュマーケット**（現在の所持金: **{coins} NP**）\n"
+        f"最高記録のサイズが大きいほど高値で売れます！売却したい魚を選んでね！",
+        view=view,
+    )
 
 
 bot.run(TOKEN)
