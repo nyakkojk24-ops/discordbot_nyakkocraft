@@ -19,7 +19,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 users_json_path = os.path.join(base_dir, "data", "users.json")
 recipes_json_path = os.path.join(base_dir, "data", "recipes.json")
 
-
 # --------------------------------------------------
 # 📁 データの読み書き関数
 # --------------------------------------------------
@@ -259,6 +258,7 @@ async def do_farm_logic_edit(
         embed=None,
         view=view,
     )
+
 
 # --------------------------------------------------
 # 🖼️ UIクラス群（Modal & View）
@@ -953,15 +953,17 @@ class SellView(discord.ui.View):
         ) 
 
 # --------------------------------------------------
-# 🎮 メインメニュー View（/start 用）
+# 🎮 メインメニュー View（上書き ＆ 閉じるボタン付き）
 # --------------------------------------------------
 class MainMenuView(discord.ui.View):
 
     def __init__(self, author):
-        super().__init__(timeout=120)  # 2分間操作可能
+        super().__init__(timeout=180)  # 3分間操作可能
         self.author = author
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+    async def interaction_check(
+        self, interaction: discord.Interaction
+    ) -> bool:
         if interaction.user.id != self.author.id:
             await interaction.response.send_message(
                 "これは他の人のメインメニューです！`/start` で自分用を開いてね！",
@@ -970,15 +972,15 @@ class MainMenuView(discord.ui.View):
             return False
         return True
 
-    # 1段目: メインアクション
+    # 1段目: アクション
     @discord.ui.button(
         label="🎣 釣りをする", style=discord.ButtonStyle.primary, row=0
     )
     async def btn_fish(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        # 既存の fish コマンド相当の処理を実行
-        await do_fish_logic(interaction)
+        # 画面をそのまま上書き更新して釣りを実行！
+        await do_fish_logic_edit(interaction, self)
 
     @discord.ui.button(
         label="🥗 野菜収穫", style=discord.ButtonStyle.success, row=0
@@ -986,7 +988,7 @@ class MainMenuView(discord.ui.View):
     async def btn_farm(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        await do_farm_logic(interaction)
+        await do_farm_logic_edit(interaction, self)
 
     @discord.ui.button(
         label="📦 インベントリ", style=discord.ButtonStyle.secondary, row=0
@@ -1072,6 +1074,19 @@ class MainMenuView(discord.ui.View):
             embed.description = "まだ誰も料理を発見していません！"
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # 🌟 3段目: 閉じるボタン（メッセージ削除）
+    @discord.ui.button(
+        label="❌ メニューを閉じる",
+        style=discord.ButtonStyle.danger,
+        row=2,
+    )
+    async def btn_close(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        self.stop()
+        # このパネル（メッセージ）自体を削除してログを綺麗にする！
+        await interaction.message.delete()
 
 
 # --------------------------------------------------
@@ -1466,139 +1481,34 @@ async def on_ready():
         print(f"同期エラー: {e}")
 
 # --------------------------------------------------
-# 🎮 メインメニュー View（上書き ＆ 閉じるボタン付き）
+# 🚀 メインメニューコマンド（/start）
 # --------------------------------------------------
-class MainMenuView(discord.ui.View):
-
-    def __init__(self, author):
-        super().__init__(timeout=180)  # 3分間操作可能
-        self.author = author
-
-    async def interaction_check(
-        self, interaction: discord.Interaction
-    ) -> bool:
-        if interaction.user.id != self.author.id:
-            await interaction.response.send_message(
-                "これは他の人のメインメニューです！`/start` で自分用を開いてね！",
-                ephemeral=True,
-            )
-            return False
-        return True
-
-    # 1段目: アクション
-    @discord.ui.button(
-        label="🎣 釣りをする", style=discord.ButtonStyle.primary, row=0
+@bot.hybrid_command(
+    name="start",
+    aliases=["スタート", "menu"],
+    description="にゃっこBotのメインパネルを開きます（全機能がボタンで操作可能）",
+)
+async def start_menu(ctx):
+    embed = discord.Embed(
+        title="🐱 にゃっこBot メインメニュー",
+        description="下のボタンを押すだけで、全ての機能が遊べます！",
+        color=discord.Color.blue(),
     )
-    async def btn_fish(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        # 画面をそのまま上書き更新して釣りを実行！
-        await do_fish_logic_edit(interaction, self)
-
-    @discord.ui.button(
-        label="🥗 野菜収穫", style=discord.ButtonStyle.success, row=0
+    embed.add_field(
+        name="🎮 遊べる機能",
+        value=(
+            "🎣 **釣りをする** : 魚を吊り上げます\n"
+            "🥗 **野菜収穫** : 料理に使う野菜をゲット\n"
+            "📦 **インベントリ** : 手持ち確認・VCお披露目\n"
+            "🍳 **料理をする** : クラフト＆新レシピ考案\n"
+            "💰 **魚を売る** : NPを獲得\n"
+            "📖 **料理図鑑** : レシピ一覧をチェック"
+        ),
+        inline=False,
     )
-    async def btn_farm(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        await do_farm_logic_edit(interaction, self)
+    embed.set_footer(text="💡 ボタンを押してゲームを開始しよう！")
 
-    @discord.ui.button(
-        label="📦 インベントリ", style=discord.ButtonStyle.secondary, row=0
-    )
-    async def btn_bag(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        user_id = str(self.author.id)
-        users_data = load_user_data()
-        user_data = users_data.get(user_id, {})
-
-        view = InventoryView(author=self.author, user_data=user_data)
-        await interaction.response.send_message(
-            f"📦 **{self.author.display_name} さんのインベントリ**",
-            view=view,
-            ephemeral=True,
-        )
-
-    # 2段目: 経済・クラフト系
-    @discord.ui.button(
-        label="🍳 料理をする", style=discord.ButtonStyle.primary, row=1
-    )
-    async def btn_cook(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        user_id = str(self.author.id)
-        users_data = load_user_data()
-        user_data = users_data.get(user_id, {})
-
-        view = CookingView(author=self.author, user_data=user_data)
-        await interaction.response.send_message(
-            "🍳 調理器具と使う材料を選んでください！", view=view, ephemeral=True
-        )
-
-    @discord.ui.button(
-        label="💰 魚を売る", style=discord.ButtonStyle.success, row=1
-    )
-    async def btn_sell(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        user_id = str(self.author.id)
-        users_data = load_user_data()
-        user_data = users_data.get(user_id, {})
-
-        json_path = os.path.join(base_dir, "jsonall", "fishes.json")
-        with open(json_path, "r", encoding="utf-8") as f:
-            all_fishes = json.load(f)
-
-        coins = user_data.get("coins", 0)
-        view = SellView(
-            author=self.author, user_data=user_data, all_fishes=all_fishes
-        )
-        await interaction.response.send_message(
-            f"🏧 **フィッシュマーケット**（所持金: **{coins} NP**）\n売却したい魚を選んでね！",
-            view=view,
-            ephemeral=True,
-        )
-
-    @discord.ui.button(
-        label="📖 料理図鑑", style=discord.ButtonStyle.secondary, row=1
-    )
-    async def btn_recipes(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        recipes = load_recipes()
-        embed = discord.Embed(
-            title="📖 発見済み料理レシピ図鑑", color=discord.Color.gold()
-        )
-
-        has_recipe = False
-        for appliance, dish_list in recipes.items():
-            if dish_list:
-                has_recipe = True
-                text = ""
-                for dish in dish_list:
-                    ingredients = ", ".join(dish.get("ingredients", []))
-                    text += f"・**{dish['name']}** (考案: {dish.get('author', '不明')})\n   └ 材料: {ingredients}\n"
-                embed.add_field(
-                    name=f"🍳 {appliance}", value=text, inline=False
-                )
-
-        if not has_recipe:
-            embed.description = "まだ誰も料理を発見していません！"
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    # 🌟 3段目: 閉じるボタン（メッセージ削除）
-    @discord.ui.button(
-        label="❌ メニューを閉じる",
-        style=discord.ButtonStyle.danger,
-        row=2,
-    )
-    async def btn_close(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        self.stop()
-        # このパネル（メッセージ）自体を削除してログを綺麗にする！
-        await interaction.message.delete()
+    view = MainMenuView(author=ctx.author)
+    await ctx.send(embed=embed, view=view)
 
 bot.run(TOKEN)
