@@ -56,6 +56,23 @@ def save_user_data(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+# 🌟 ここに meats.json 読み込み関数を追加！
+def load_meats():
+    """meats.json を読み込む"""
+    json_path = os.path.join(base_dir, "jsonall", "meats.json")
+    if not os.path.exists(json_path):
+        return {}
+    with open(json_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def load_seafood():
+    """seafood.json を読み込む"""
+    json_path = os.path.join(base_dir, "jsonall", "seafood.json")
+    if not os.path.exists(json_path):
+        return {}
+    with open(json_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
 
 
 # 🥗 収穫処理の共通ロジック
@@ -198,6 +215,82 @@ async def do_fish_logic_edit(
             embed=None,
             view=view,
         )
+
+
+# --------------------------------------------------
+# 🤿 耐久値対応版：磯採りロジック
+# --------------------------------------------------
+async def do_dive_logic_edit(
+    interaction: discord.Interaction, view: discord.ui.View
+):
+    user_id = str(interaction.user.id)
+    users_data = load_user_data()
+
+    if user_id not in users_data:
+        users_data[user_id] = {
+            "name": interaction.user.name,
+            "coins": 100,
+            "inventory": {},
+            "veggies": {},
+            "seafood": {},
+            "dishes": {},
+            "durability": {"fishing_rod": 10, "hoe": 10, "spear": 10},
+        }
+
+    user = users_data[user_id]
+    if "durability" not in user:
+        user["durability"] = {"fishing_rod": 10, "hoe": 10, "spear": 10}
+    if "spear" not in user["durability"]:
+        user["durability"]["spear"] = 10  # ヤスの初期耐久
+
+    # 🤿 ヤスの耐久値チェック
+    spear_durability = user["durability"].get("spear", 0)
+    if spear_durability <= 0:
+        await interaction.response.edit_message(
+            content=(
+                "💥 **ヤス（突き刺し具）が壊れています！**\n"
+                "ショップで新しいヤスを修理・購入してね！\n\n"
+                "👇 **メニューに戻る**"
+            ),
+            embed=None,
+            view=view,
+        )
+        return
+
+    # 耐久値を 1 減らす
+    user["durability"]["spear"] -= 1
+    current_spear = user["durability"]["spear"]
+
+    # 海の幸の抽選
+    all_seafood = load_seafood()
+    if not all_seafood:
+        await interaction.response.send_message(
+            "⚠️ 海の幸データ（seafood.json）が見つかりません！", ephemeral=True
+        )
+        return
+
+    chosen_item = random.choice(list(all_seafood.keys()))
+    item_info = all_seafood[chosen_item]
+
+    if "seafood" not in user:
+        user["seafood"] = {}
+
+    user["seafood"][chosen_item] = user["seafood"].get(chosen_item, 0) + 1
+    save_user_data(users_data)
+
+    broke_text = "\n⚠️ **ヤスが壊れてしまった！**" if current_spear == 0 else ""
+
+    await interaction.response.edit_message(
+        content=(
+            f"🤿 **{chosen_item}** をゲットした！\n"
+            f"💬 {item_info.get('description', '')}\n"
+            f"📦（所持数: {user['seafood'][chosen_item]}個）\n"
+            f"🛠️ **ヤス残り耐久:** `{current_spear}/10`{broke_text}\n\n"
+            f"👇 **続けて遊ぶ場合はボタンを押してね！**"
+        ),
+        embed=None,
+        view=view,
+    )
 
 
 # --------------------------------------------------
@@ -382,9 +475,9 @@ class ShowItemSelectView(discord.ui.View):
             f"📢 **{vc_channel.name}** のチャットにお披露目しました！",
             ephemeral=True,
         )
-
-
-# ① インベントリ画面（魚・料理一覧）
+# --------------------------------------------------
+# 📦 統一版インベントリ View
+# --------------------------------------------------
 class InventoryView(discord.ui.View):
 
     def __init__(self, author, user_data):
@@ -393,9 +486,11 @@ class InventoryView(discord.ui.View):
         self.user_data = user_data
 
     @discord.ui.button(
-        label="🐟 魚一覧", style=discord.ButtonStyle.primary, row=0
+        label="🔄 最新表示に更新",
+        style=discord.ButtonStyle.primary,
+        row=0,
     )
-    async def show_fishes(
+    async def refresh_inventory(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
         if interaction.user.id != self.author.id:
@@ -404,85 +499,15 @@ class InventoryView(discord.ui.View):
             )
             return
 
-        inventory = self.user_data.get("inventory", {})
-        msg = f"📦 **{self.author.display_name} さんの魚バッグ** 📦\n"
-        msg += "───────────────────\n"
+        # 最新データをロードして表示更新
+        users_data = load_user_data()
+        self.user_data = users_data.get(str(self.author.id), {})
 
-        has_item = False
-        for fish_name, data in inventory.items():
-            sizes = data.get("sizes", [])
-            count = len(sizes)
-            max_size = data.get("max_size", 0)
-
-            if count > 0:
-                msg += f"🐟 **{fish_name}**: {count}匹 （最大: {max_size}cm）\n"
-                has_item = True
-
-        if not has_item:
-            msg += "魚を持っていません！\n"
-
-        msg += "───────────────────"
-        await interaction.response.edit_message(content=msg, view=self)
-
-    # 🌟 新設: 野菜一覧ボタン！
-    @discord.ui.button(
-        label="🥗 野菜一覧", style=discord.ButtonStyle.success, row=0
-    )
-    async def show_veggies(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        if interaction.user.id != self.author.id:
-            await interaction.response.send_message(
-                "他の人のインベントリは操作できません！", ephemeral=True
-            )
-            return
-
-        veggies = self.user_data.get("veggies", {})
-        msg = f"🥗 **{self.author.display_name} さんの野菜バッグ** 🥗\n"
-        msg += "───────────────────\n"
-
-        has_item = False
-        for veggie_name, count in veggies.items():
-            if count > 0:
-                msg += f"🥗 **{veggie_name}**: {count}個\n"
-                has_item = True
-
-        if not has_item:
-            msg += "まだ野菜を持っていません！`!farm` で収穫しましょう！\n"
-
-        msg += "───────────────────"
+        msg = build_inventory_text(self.author, self.user_data)
         await interaction.response.edit_message(content=msg, view=self)
 
     @discord.ui.button(
-        label="🍳 料理一覧", style=discord.ButtonStyle.secondary, row=0
-    )
-    async def show_dishes(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        if interaction.user.id != self.author.id:
-            await interaction.response.send_message(
-                "他の人のインベントリは操作できません！", ephemeral=True
-            )
-            return
-
-        dishes = self.user_data.get("dishes", {})
-        msg = f"🍳 **{self.author.display_name} さんの料理バッグ** 🍳\n"
-        msg += "───────────────────\n"
-
-        has_item = False
-        for dish_name, count in dishes.items():
-            if count > 0:
-                msg += f"🍳 **{dish_name}**: {count}個\n"
-                has_item = True
-
-        if not has_item:
-            msg += "まだ料理を持っていません！`!cook` で料理を作りましょう！\n"
-
-        msg += "───────────────────"
-        await interaction.response.edit_message(content=msg, view=self)
-
-    @discord.ui.button(
-        label="📢 VCにお披露目", style=discord.ButtonStyle.secondary, row=1
+        label="📢 VCにお披露目", style=discord.ButtonStyle.success, row=0
     )
     async def share_to_vc(
         self, interaction: discord.Interaction, button: discord.ui.Button
@@ -509,6 +534,82 @@ class InventoryView(discord.ui.View):
             view=show_view,
             ephemeral=True,
         )
+
+    @discord.ui.button(
+        label="❌ 閉じる", style=discord.ButtonStyle.secondary, row=0
+    )
+    async def btn_close(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await interaction.message.delete()
+
+
+# 📄 インベントリのテキストを組み立てる共通関数
+def build_inventory_text(author, user_data):
+    msg = f"📦 **{author.display_name} さんの所持アイテム一覧** 📦\n"
+    msg += "───────────────────\n"
+
+    inventory = user_data.get("inventory", {})  # 魚
+    veggies = user_data.get("veggies", {})  # 野菜
+    meats = user_data.get("meats", {})  # お肉
+    seafood = user_data.get("seafood", {})  # 海の幸
+    seasonings = user_data.get("seasonings", {})  # 調味料
+    dishes = user_data.get("dishes", {})  # 料理
+
+    has_any_item = False
+
+    # 1. 🐟 魚
+    fishes_text = []
+    for fish_name, data in inventory.items():
+        count = len(data.get("sizes", []))
+        if count > 0:
+            max_size = data.get("max_size", 0)
+            fishes_text.append(f"・**{fish_name}**: {count}匹 (最大: {max_size}cm)")
+    if fishes_text:
+        msg += "🐟 **魚**\n" + "\n".join(fishes_text) + "\n\n"
+        has_any_item = True
+
+    # 2. 🤿 海の幸
+    seafood_text = [
+        f"・**{k}**: {v}個" for k, v in seafood.items() if v > 0
+    ]
+    if seafood_text:
+        msg += "🤿 **海の幸**\n" + "\n".join(seafood_text) + "\n\n"
+        has_any_item = True
+
+    # 3. 🥗 野菜
+    veggies_text = [
+        f"・**{k}**: {v}個" for k, v in veggies.items() if v > 0
+    ]
+    if veggies_text:
+        msg += "🥗 **野菜・穀物**\n" + "\n".join(veggies_text) + "\n\n"
+        has_any_item = True
+
+    # 4. 🥩 お肉
+    meats_text = [f"・**{k}**: {v}個" for k, v in meats.items() if v > 0]
+    if meats_text:
+        msg += "🥩 **お肉**\n" + "\n".join(meats_text) + "\n\n"
+        has_any_item = True
+
+    # 5. 🧂 調味料
+    seasonings_text = [
+        f"・**{k}**: {v}個" for k, v in seasonings.items() if v > 0
+    ]
+    if seasonings_text:
+        msg += "🧂 **調味料**\n" + "\n".join(seasonings_text) + "\n\n"
+        has_any_item = True
+
+    # 6. 🍳 料理
+    dishes_text = [f"・**{k}**: {v}個" for k, v in dishes.items() if v > 0]
+    if dishes_text:
+        msg += "🍳 **作成済み料理**\n" + "\n".join(dishes_text) + "\n\n"
+        has_any_item = True
+
+    if not has_any_item:
+        msg += "何もアイテムを持っていません！\n`/start` から釣りや農作業、素潜りに行ってみましょう！\n\n"
+
+    msg += "───────────────────"
+    return msg
 
 # ② 新料理の命名モーダル
 class NameDishModal(discord.ui.Modal, title="🎉 新料理の命名！"):
@@ -623,8 +724,6 @@ class SelectRecipeView(discord.ui.View):
         )
         await interaction.response.send_modal(modal)
 
-
-# ④ 調理メイン画面
 class CookingView(discord.ui.View):
 
     def __init__(self, author, user_data):
@@ -675,7 +774,17 @@ class CookingView(discord.ui.View):
                     label="網焼きグリル",
                     description="直火で香ばしく焼き目をつける",
                     emoji="🍖",
-),
+                ),
+                discord.SelectOption(
+                    label="炊飯器",
+                    description="お米と素材の旨味をぎゅっと炊き込む",
+                    emoji="🍚",
+                ),
+                discord.SelectOption(
+                    label="土鍋",
+                    description="香ばしいおこげと出汁をじっくり染み込ませる",
+                    emoji="🍲",
+                ),
             ],
         )
         appliance_select.callback = self.on_appliance_select
@@ -683,8 +792,6 @@ class CookingView(discord.ui.View):
 
         # 素材・料理の混合選択肢を作成
         ingredient_options = []
-        print("=== DEBUG COOKING ===")
-        print("読み込んだseasonings:", user_data.get("seasonings", {}))
 
         # ① 魚を追加
         for name, data in user_inventory.items():
@@ -706,6 +813,17 @@ class CookingView(discord.ui.View):
                     )
                 )
 
+        # お肉を追加 🥩
+        user_meats = user_data.get("meats", {})
+        for name, count in user_meats.items():
+            if count > 0:
+                ingredient_options.append(
+                    discord.SelectOption(
+                        label=f"🥩 {name} ({count}個所持)", value=name
+                    )
+                )
+
+        # ③ 調味料を追加
         user_seasonings = user_data.get("seasonings", {})
         for name, count in user_seasonings.items():
             if count > 0:
@@ -714,15 +832,25 @@ class CookingView(discord.ui.View):
                         label=f"🧂 {name} (所持: {count}個)",
                         value=name,
                         description="市場で購入した調味料",
-            )
-        )
+                    )
+                )
 
-        # ③ 料理（中間素材）を追加
+        # ④ 料理（中間素材）を追加
         for name, count in user_dishes.items():
             if count > 0:
                 ingredient_options.append(
                     discord.SelectOption(
                         label=f"🍳 {name} ({count}個所持)", value=name
+                    )
+                )
+
+        # ⑤ 海の幸を追加 🤿
+        user_seafood = user_data.get("seafood", {})
+        for name, count in user_seafood.items():
+            if count > 0:
+                ingredient_options.append(
+                    discord.SelectOption(
+                        label=f"🤿 {name} ({count}個所持)", value=name
                     )
                 )
 
@@ -735,21 +863,17 @@ class CookingView(discord.ui.View):
             )
             ingredient_select.callback = self.on_fish_select
             self.add_item(ingredient_select)
-            
-            
 
     async def on_appliance_select(self, interaction: discord.Interaction):
         if interaction.user.id != self.author.id:
             return
         self.selected_appliance = interaction.data["values"][0]
-        # 選択状態だけ受け取り、余計なメッセージを出さないようにする
         await interaction.response.defer()
 
     async def on_fish_select(self, interaction: discord.Interaction):
         if interaction.user.id != self.author.id:
             return
         self.selected_fishes = interaction.data["values"]
-        # 選択状態だけ受け取り、余計なメッセージを出さないようにする
         await interaction.response.defer()
 
     @discord.ui.button(
@@ -758,42 +882,40 @@ class CookingView(discord.ui.View):
     async def start_cooking(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        if interaction.user.id != self.author.id:
-            await interaction.response.send_message(
-                "他の人の操作はできません！", ephemeral=True
-            )
-            return
-
-        # 1. 材料が何も選ばれていない場合
         if not self.selected_fishes:
             await interaction.response.send_message(
-                "❌ 材料が選択されていません！ドロップダウンから材料を選んでください。",
-                ephemeral=True,
+                "❌ 材料が選択されていません！", ephemeral=True
             )
             return
 
-        # 最新のユーザーデータを取得
+        # 2. 最新のユーザーデータを取得
         users_data = load_user_data()
         user_id = str(self.author.id)
         user = users_data.get(user_id, {})
+
         inventory = user.get("inventory", {})
         veggies = user.get("veggies", {})
         dishes = user.get("dishes", {})
+        seasonings = user.get("seasonings", {})
 
-        # 2. 在庫チェック
-        for item in self.selected_fishes:
-            fish_sizes = inventory.get(item, {}).get("sizes", [])
-            fish_count = len(fish_sizes)
-            veggie_count = veggies.get(item, 0)
-            dish_count = dishes.get(item, 0)
+# 在庫チェック
+        meats = user.get("meats", {})
+        for item_name in self.selected_fishes:
+            in_fish = item_name in inventory
+            in_veggie = item_name in veggies
+            in_seasoning = item_name in seasonings
+            in_meat = item_name in meats  # 👈 追加
+            in_dish = item_name in dishes
 
-            if fish_count <= 0 and veggie_count <= 0 and dish_count <= 0:
+            if not (
+                in_fish or in_veggie or in_seasoning or in_meat or in_dish
+            ):
                 await interaction.response.send_message(
-                    f"❌ **{item}** の在庫が足りません！", ephemeral=True
+                    f"❌ {item_name} の在庫がありません！", ephemeral=True
                 )
                 return
 
-        # 3. 消費処理
+        # 消費処理
         for item in self.selected_fishes:
             fish_sizes = inventory.get(item, {}).get("sizes", [])
 
@@ -801,22 +923,29 @@ class CookingView(discord.ui.View):
                 fish_sizes.pop(0)
             elif veggies.get(item, 0) > 0:
                 veggies[item] -= 1
+                if veggies[item] <= 0:
+                    del veggies[item]
+            elif seasonings.get(item, 0) > 0:
+                seasonings[item] -= 1
+                if seasonings[item] <= 0:
+                    del seasonings[item]
+            elif meats.get(item, 0) > 0:  # 👈 お肉の消費処理を追加！
+                meats[item] -= 1
+                if meats[item] <= 0:
+                    del meats[item]
             elif dishes.get(item, 0) > 0:
                 dishes[item] -= 1
-            elif user.get("seasonings", {}).get(item, 0) > 0:  # 👈 これを追加！
-                user["seasonings"][item] -= 1
+                if dishes[item] <= 0:
+                    del dishes[item]
 
         save_user_data(users_data)
 
-        # ⚠️ ここにあった send_message を削除しました！
-
-        # 4. レシピ判定＆画面呼び出し
+        # 5. レシピ判定＆画面呼び出し
         sorted_fishes = sorted(self.selected_fishes)
         recipe_key = f"{self.selected_appliance}_" + "_".join(sorted_fishes)
         recipes = load_recipes()
 
         if recipe_key in recipes and len(recipes[recipe_key]) > 0:
-            # 既存レシピがある場合はメッセージ送信（SelectRecipeView付き）
             select_view = SelectRecipeView(
                 author=self.author,
                 recipe_key=recipe_key,
@@ -832,7 +961,6 @@ class CookingView(discord.ui.View):
                 ephemeral=True,
             )
         else:
-            # 新レシピの場合はモーダルを表示（これが最初の応答になるのでエラーになりません！）
             modal = NameDishModal(
                 recipe_key=recipe_key,
                 appliance=self.selected_appliance,
@@ -840,7 +968,9 @@ class CookingView(discord.ui.View):
                 user=self.author,
             )
             await interaction.response.send_modal(modal)
-            
+
+
+
 # 🐟 40cm以下の小魚用 View（メインメニュー上書き対応版）
 class CatchOrReleaseView(discord.ui.View):
 
@@ -878,7 +1008,6 @@ class CatchOrReleaseView(discord.ui.View):
         save_user_data(self.users_data)
         count = len(inventory[self.fish_name]["sizes"])
 
-        # 🌟 処理が終わったら、そのままメインメニュー（MainMenuView）に上書きして戻す！
         main_view = MainMenuView(author=self.author)
         await interaction.response.edit_message(
             content=(
@@ -886,12 +1015,12 @@ class CatchOrReleaseView(discord.ui.View):
                 f"（所持数: {count}匹 / 最大記録: {inventory[self.fish_name]['max_size']}cm）\n\n"
                 f"👇 **続けて遊ぶ場合はボタンを押してね！**"
             ),
-            view=main_view,  # メインメニューのボタンに戻す
+            view=main_view,
         )
 
-    # ② リリースするボタン
+    # ② リリリースするボタン
     @discord.ui.button(
-        label="🌊 リリースする", style=discord.ButtonStyle.secondary
+        label="🌊 リリリースする", style=discord.ButtonStyle.secondary
     )
     async def btn_release(
         self, interaction: discord.Interaction, button: discord.ui.Button
@@ -899,7 +1028,6 @@ class CatchOrReleaseView(discord.ui.View):
         if interaction.user.id != self.author.id:
             return
 
-        # 🌟 リリリース後もメインメニュー（MainMenuView）に上書きして戻す！
         main_view = MainMenuView(author=self.author)
         await interaction.response.edit_message(
             content=(
@@ -907,9 +1035,8 @@ class CatchOrReleaseView(discord.ui.View):
                 f"（また大きくなって帰ってきてね！）\n\n"
                 f"👇 **続けて遊ぶ場合はボタンを押してね！**"
             ),
-            view=main_view,  # メインメニューのボタンに戻す
+            view=main_view,
         )
-
 # --------------------------------------------------
 # 🧂 調味料購入用 View
 # --------------------------------------------------
@@ -1014,6 +1141,70 @@ class BuySeasoningView(discord.ui.View):
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
         await interaction.message.delete()
+
+
+# --------------------------------------------------
+# 🥩 精肉店（お肉購入用） View
+# --------------------------------------------------
+class BuyMeatView(discord.ui.View):
+
+    def __init__(self, author, user_data):
+        super().__init__(timeout=60)
+        self.author = author
+        self.user_data = user_data
+
+        meats = load_meats()
+        options = []
+        for name, info in meats.items():
+            price = info.get("price", 100)
+            desc = info.get("description", "")
+            emoji = info.get("emoji", "🥩")
+            options.append(
+                discord.SelectOption(
+                    label=f"{name} ({price} NP)",
+                    description=desc,
+                    value=name,
+                    emoji=emoji,
+                )
+            )
+
+        if options:
+            select = discord.ui.Select(
+                placeholder="購入したいお肉を選んでください",
+                options=options,
+            )
+            select.callback = self.on_select_buy
+            self.add_item(select)
+
+    async def on_select_buy(self, interaction: discord.Interaction):
+        item_name = interaction.data["values"][0]
+        meats = load_meats()
+        price = meats.get(item_name, {}).get("price", 100)
+
+        users_data = load_user_data()
+        user = users_data.get(str(self.author.id), {})
+        coins = user.get("coins", 0)
+
+        if coins < price:
+            await interaction.response.send_message(
+                f"❌ **NPが足りません！**（{item_name}は {price} NP必要です）",
+                ephemeral=True,
+            )
+            return
+
+        user["coins"] -= price
+
+        if "meats" not in user:
+            user["meats"] = {}
+        user["meats"][item_name] = user["meats"].get(item_name, 0) + 1
+
+        save_user_data(users_data)
+
+        await interaction.response.send_message(
+            f"✨ **{item_name}** を1個購入しました！\n"
+            f"📦 所持数: **{user['meats'][item_name]}個** / 💰 残高: **{user['coins']} NP**",
+            ephemeral=True,
+        )
 
 
 # --------------------------------------------------
@@ -1185,6 +1376,35 @@ class ShopView(discord.ui.View):
             ephemeral=True,
         )
 
+    @discord.ui.button(
+        label="🤿 ヤスを修理 (100 NP)",
+        style=discord.ButtonStyle.primary,
+        row=0,
+    )
+    async def buy_spear(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        users_data = load_user_data()
+        user = users_data.get(str(self.author.id), {})
+        coins = user.get("coins", 0)
+
+        if coins < 100:
+            await interaction.response.send_message(
+                "❌ **NPが足りません！**（必要: 100 NP）", ephemeral=True
+            )
+            return
+
+        user["coins"] -= 100
+        if "durability" not in user:
+            user["durability"] = {}
+        user["durability"]["spear"] = 10
+
+        save_user_data(users_data)
+        await interaction.response.send_message(
+            f"✨ **ヤスを修理しました！** (耐久: 10/10)\n💰 残高: **{user['coins']} NP**",
+            ephemeral=True,
+        )
+
     # --- 2段目 (row=1): ショップ＆出荷 -----------------
     @discord.ui.button(
         label="🧂 調味料を買う", style=discord.ButtonStyle.primary, row=1
@@ -1208,6 +1428,7 @@ class ShopView(discord.ui.View):
         style=discord.ButtonStyle.danger,
         row=1,
     )
+
     async def sell_all(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
@@ -1266,6 +1487,25 @@ class ShopView(discord.ui.View):
                 f"🐟 魚: {sold_fishes_count}匹 / 🥗 野菜: {sold_veggies_count}個"
             ),
             view=self,
+        )
+
+
+    # 🌟 お肉を買うボタン
+    @discord.ui.button(
+        label="🥩 お肉を買う", style=discord.ButtonStyle.primary, row=1
+    )
+    async def buy_meat(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        users_data = load_user_data()
+        user = users_data.get(str(self.author.id), {})
+
+        meat_view = BuyMeatView(author=self.author, user_data=user)
+        await interaction.response.send_message(
+            f"🥩 **にゃっこ精肉店**（所持金: **{user.get('coins', 0)} NP**）\n"
+            f"料理のメインディッシュに使えるお肉を購入できます！",
+            view=meat_view,
+            ephemeral=True,
         )
 
     @discord.ui.button(
@@ -1369,6 +1609,14 @@ class MainMenuView(discord.ui.View):
             view=view,
             ephemeral=True,
         )
+
+    @discord.ui.button(
+        label="🤿 磯採りに行く", style=discord.ButtonStyle.primary, row=0
+    )
+    async def btn_dive(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await do_dive_logic_edit(interaction, self)
 
     # 2段目: 経済・クラフト系
     @discord.ui.button(
@@ -1489,9 +1737,7 @@ async def inventory(ctx):
     users_data = load_user_data()
     user_data = users_data.get(user_id, {})
 
-    msg = f"📦 **{ctx.author.display_name} さんのインベントリ** 📦\n"
-    msg += "下のボタンを押して「魚一覧」や「料理一覧」に切り替えられます！"
-
+    msg = build_inventory_text(ctx.author, user_data)
     view = InventoryView(author=ctx.author, user_data=user_data)
     await ctx.send(msg, view=view)
 
@@ -1546,6 +1792,8 @@ async def fish(ctx):
             f"⚠️ **40cm以下の小魚です！どうする？**",
             view=view,
         )
+
+
 
     # 40cm超えの場合はそのまま自動持ち帰り
     else:
@@ -1811,6 +2059,70 @@ async def harvest_veggies(ctx):
         f"📦（所持数: {veggies[chosen_veggie]}個）"
     )
 
+@bot.hybrid_command(
+    name="dive",
+    aliases=["磯採り", "素潜り"],
+    description="素潜りで海の幸（貝やタコ）を採取します",
+)
+async def dive_command(ctx):
+    user_id = str(ctx.author.id)
+    users_data = load_user_data()
+
+    if user_id not in users_data:
+        users_data[user_id] = {
+            "name": ctx.author.name,
+            "coins": 100,
+            "inventory": {},
+            "veggies": {},
+            "seafood": {},
+            "dishes": {},
+            "durability": {"fishing_rod": 10, "hoe": 10, "spear": 10},
+        }
+
+    user = users_data[user_id]
+    if "durability" not in user:
+        user["durability"] = {"fishing_rod": 10, "hoe": 10, "spear": 10}
+    if "spear" not in user["durability"]:
+        user["durability"]["spear"] = 10
+
+    # 🛠️ 耐久値チェック
+    spear_durability = user["durability"].get("spear", 0)
+    if spear_durability <= 0:
+        await ctx.send(
+            "💥 **ヤス（突き刺し具）が壊れています！**\n"
+            "ショップ（`/start` や `/sell`）で新しいヤスを修理してね！"
+        )
+        return
+
+    # 耐久値を 1 減らす
+    user["durability"]["spear"] -= 1
+    current_spear = user["durability"]["spear"]
+
+    all_seafood = load_seafood()
+    if not all_seafood:
+        await ctx.send(
+            "⚠️ `jsonall/seafood.json` が見つかりません！ファイルを作成してください！"
+        )
+        return
+
+    chosen_item = random.choice(list(all_seafood.keys()))
+    item_info = all_seafood[chosen_item]
+
+    if "seafood" not in user:
+        user["seafood"] = {}
+
+    user["seafood"][chosen_item] = user["seafood"].get(chosen_item, 0) + 1
+    save_user_data(users_data)
+
+    broke_text = "\n⚠️ **ヤスが壊れてしまった！**" if current_spear == 0 else ""
+
+    await ctx.send(
+        f"🤿 **{chosen_item}** をゲットした！\n"
+        f"💬 {item_info.get('description', '')}\n"
+        f"📦（所持数: {user['seafood'][chosen_item]}個）\n"
+        f"🛠️ **ヤス残り耐久:** `{current_spear}/10`{broke_text}"
+    )
+
 # --------------------------------------------------
 # 📖 にゃっこヘルプコマンド
 # --------------------------------------------------
@@ -1827,42 +2139,41 @@ async def nyakko_help(ctx):
     )
 
     embed.add_field(
-        name="🎣 釣り・収穫",
+        name="🎣 採取・アクティビティ",
         value=(
             "`/fish` : 魚を釣る（40cm以下はリリース選択可）\n"
-            "`/farm` : 野菜を収穫する"
+            "`/farm` : 野菜やお米を収穫する\n"
+            "`/dive` : 素潜りで海の幸（タコ・貝類など）を採取する"
         ),
         inline=False,
     )
     embed.add_field(
         name="🍳 調理・レシピ",
         value=(
-            "`/cook` : 器具と素材を選んで料理をクラフト・命名！\n"
-            "`/recipes` : 発見済みの料理図鑑を見る"
+            "`/cook` : 器具と素材を選んで料理をクラフト！\n"
+            "`/recipes` : みんなが発見した料理図鑑を見る"
         ),
         inline=False,
     )
     embed.add_field(
         name="📦 アイテム・マーケット",
         value=(
-            "`/bag` : 所持アイテムの確認（VCお披露目もここから！）\n"
-            "`/sell` : 魚を売って NP（コイン）をゲット"
+            "`/bag` : 全所持アイテムの確認（VCお披露目もここから！）\n"
+            "`/sell` : 魚や野菜を売って NP（コイン）を獲得・市場を開く"
         ),
         inline=False,
     )
+    embed.add_field(
+        name="🚀 メイン操作パネル",
+        value="`/start` : 全機能がボタン一つで遊べるメインメニューを開く",
+        inline=False,
+    )
 
-    embed.set_footer(text="💡 スラッシュコマンド（/）に対応しました！")
-    await ctx.send(embed=embed)
+    embed.set_footer(text="💡 スラッシュコマンド（/）に対応！道具の耐久値に注意して遊んでね！")
 
-@bot.event
-async def on_ready():
-    # スラッシュコマンド（App Commands）をDiscordサーバーに同期
-    try:
-        synced = await bot.tree.sync()
-        print(f"Logged in as {bot.user}")
-        print(f"✨ {len(synced)} 個のスラッシュコマンドを同期しました！")
-    except Exception as e:
-        print(f"同期エラー: {e}")
+    # 🌟 閉じるボタン（DeleteMessageView）を添えて送信！
+    view = DeleteMessageView(author=ctx.author)
+    await ctx.send(embed=embed, view=view)
 
 # --------------------------------------------------
 # 🚀 メインメニューコマンド（/start）
