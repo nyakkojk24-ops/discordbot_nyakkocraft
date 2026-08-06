@@ -220,14 +220,7 @@ __marimo__/
 # 環境変数・秘密情報
 .env
 
-# 非公開にしたいデータファイル
-fishes.json
-
-
-
-# 非公開にしたいデータファイル
-veggies.json
-
+jsonall/
 
 # ユーザーの所持品データ（非公開）
 data/
