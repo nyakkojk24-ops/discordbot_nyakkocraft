@@ -56,8 +56,10 @@ def save_user_data(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-# 🎣 釣り処理の共通ロジック
-async def do_fish_logic(interaction: discord.Interaction):
+# 🎣 釣りロジック（閉じるボタン付き）
+async def do_fish_logic_edit(
+    interaction: discord.Interaction, view: discord.ui.View
+):
     json_path = os.path.join(base_dir, "jsonall", "fishes.json")
     with open(json_path, "r", encoding="utf-8") as f:
         all_fishes = json.load(f)
@@ -88,8 +90,9 @@ async def do_fish_logic(interaction: discord.Interaction):
     current_max = inventory.get(chosen_name, {}).get("max_size", 0)
     is_new_record = size > current_max
 
+    # 40cm以下はキープ/リリース選択（※これ自体に閉じるボタンも含められます）
     if size <= 40:
-        view = CatchOrReleaseView(
+        catch_view = CatchOrReleaseView(
             author=interaction.user,
             fish_name=chosen_name,
             size=size,
@@ -97,9 +100,10 @@ async def do_fish_logic(interaction: discord.Interaction):
             is_new_record=is_new_record,
             users_data=users_data,
         )
-        await interaction.response.send_message(
-            f"🎣 **{chosen_name}（{size}cm）** が釣れた！\n{comment}\n⚠️ **40cm以下の小魚です！どうする？**",
-            view=view,
+        await interaction.response.edit_message(
+            content=f"🎣 **{chosen_name}（{size}cm）** が釣れた！\n{comment}\n⚠️ **40cm以下の小魚です！どうする？**",
+            embed=None,
+            view=catch_view,
         )
     else:
         if chosen_name not in inventory:
@@ -115,8 +119,12 @@ async def do_fish_logic(interaction: discord.Interaction):
         count = len(inventory[chosen_name]["sizes"])
         record_text = " 👑 **自己ベスト更新！**" if is_new_record else ""
 
-        await interaction.response.send_message(
-            f"🎣 **{chosen_name}（{size}cm）** を釣り上げた！{record_text}\n{comment}\n📦（所持数: {count}匹 / 最大記録: {inventory[chosen_name]['max_size']}cm）"
+        # 🌟 単発の釣りコマンド（!fishなど）や画面更新時に「DeleteMessageView」を使う場合
+        # メインメニュー上書きの場合は元の view (MainMenuView) に「閉じるボタン」があるのでそのままでOK！
+        await interaction.response.edit_message(
+            content=f"🎣 **{chosen_name}（{size}cm）** を釣り上げた！{record_text}\n{comment}\n📦（所持数: {count}匹 / 最大記録: {inventory[chosen_name]['max_size']}cm）",
+            embed=None,
+            view=view,
         )
 
 
@@ -799,15 +807,13 @@ class CookingView(discord.ui.View):
                 user=self.author,
             )
             await interaction.response.send_modal(modal)
-# --------------------------------------------------
-# 🐟 40cm以下の場合のキープ / リリース選択画面
-# --------------------------------------------------
+# 🐟 40cm以下の小魚用 View（メインメニュー上書き対応版）
 class CatchOrReleaseView(discord.ui.View):
 
     def __init__(
         self, author, fish_name, size, comment, is_new_record, users_data
     ):
-        super().__init__(timeout=30)
+        super().__init__(timeout=60)
         self.author = author
         self.fish_name = fish_name
         self.size = size
@@ -815,10 +821,11 @@ class CatchOrReleaseView(discord.ui.View):
         self.is_new_record = is_new_record
         self.users_data = users_data
 
+    # ① キープするボタン
     @discord.ui.button(
-        label="📦 持ち帰る", style=discord.ButtonStyle.primary
+        label="📦 キープする", style=discord.ButtonStyle.success
     )
-    async def keep_fish(
+    async def btn_keep(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
         if interaction.user.id != self.author.id:
@@ -830,57 +837,44 @@ class CatchOrReleaseView(discord.ui.View):
         if self.fish_name not in inventory:
             inventory[self.fish_name] = {"sizes": [], "max_size": 0}
 
-        # 互換性維持（もし旧データで sizes が無ければ空リストで初期化）
-        if "sizes" not in inventory[self.fish_name]:
-            inventory[self.fish_name]["sizes"] = []
-
-        # サイズをリストに追加！
         inventory[self.fish_name]["sizes"].append(self.size)
-
-        if self.size > inventory[self.fish_name]["max_size"]:
+        if self.is_new_record:
             inventory[self.fish_name]["max_size"] = self.size
 
         save_user_data(self.users_data)
-
         count = len(inventory[self.fish_name]["sizes"])
-        record_text = " 👑 **自己ベスト更新！**" if self.is_new_record else ""
-        msg = (
-            f"📦 **{self.fish_name}（{self.size}cm）** を持ち帰りました！{record_text}\n"
-            f"（所持数: {count}匹 / 最大記録: {inventory[self.fish_name]['max_size']}cm）"
-        )
-        self.stop()
-        await interaction.response.edit_message(content=msg, view=None)
 
+        # 🌟 処理が終わったら、そのままメインメニュー（MainMenuView）に上書きして戻す！
+        main_view = MainMenuView(author=self.author)
+        await interaction.response.edit_message(
+            content=(
+                f"📦 **{self.fish_name}（{self.size}cm）** を持ち帰りました！\n"
+                f"（所持数: {count}匹 / 最大記録: {inventory[self.fish_name]['max_size']}cm）\n\n"
+                f"👇 **続けて遊ぶ場合はボタンを押してね！**"
+            ),
+            view=main_view,  # メインメニューのボタンに戻す
+        )
+
+    # ② リリリースするボタン
     @discord.ui.button(
-        label="🌊 逃がす（リリース）",
-        style=discord.ButtonStyle.secondary,
+        label="🌊 リリースする", style=discord.ButtonStyle.secondary
     )
-    async def release_fish(
+    async def btn_release(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
         if interaction.user.id != self.author.id:
             return
 
-        msg = f"🌊 **{self.fish_name}（{self.size}cm）** を海に逃がしてあげた！「大きくなって戻ってこいよ〜！」"
-        self.stop()
-        await interaction.response.edit_message(content=msg, view=None)
-
-class IngredientSelect(discord.ui.Select):
-
-    def __init__(self, options):
-        super().__init__(
-            placeholder="使う材料を選んでください（複数選択可）",
-            min_values=1,
-            max_values=len(options) if options else 1,
-            options=options,
+        # 🌟 リリリース後もメインメニュー（MainMenuView）に上書きして戻す！
+        main_view = MainMenuView(author=self.author)
+        await interaction.response.edit_message(
+            content=(
+                f"🌊 **{self.fish_name}（{self.size}cm）** を海に逃がしました。\n"
+                f"（また大きくなって帰ってきてね！）\n\n"
+                f"👇 **続けて遊ぶ場合はボタンを押してね！**"
+            ),
+            view=main_view,  # メインメニューのボタンに戻す
         )
-
-    async def callback(self, interaction: discord.Interaction):
-        # ユーザーが選択した item（value）のリストを View 側に保存する！
-        self.view.selected_fishes = self.values
-        # 画面が止まらないように応答（更新なし）
-        await interaction.response.defer()
-
 # --------------------------------------------------
 # 💰 魚・料理の売却画面（View）
 # --------------------------------------------------
@@ -1097,6 +1091,22 @@ class MainMenuView(discord.ui.View):
     ):
         self.stop()
         # このパネル（メッセージ）自体を削除してログを綺麗にする！
+        await interaction.message.delete()
+
+
+class DeleteMessageView(discord.ui.View):
+
+    def __init__(self, author):
+        super().__init__(timeout=60)
+        self.author = author
+
+    @discord.ui.button(
+        label="❌ 閉じる", style=discord.ButtonStyle.secondary
+    )
+    async def btn_close(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        # ボタンが押されたらメッセージ自体を削除！
         await interaction.message.delete()
 
 
