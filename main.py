@@ -57,6 +57,103 @@ def save_user_data(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+# 🎣 釣り処理の共通ロジック
+async def do_fish_logic(interaction: discord.Interaction):
+    json_path = os.path.join(base_dir, "jsonall", "fishes.json")
+    with open(json_path, "r", encoding="utf-8") as f:
+        all_fishes = json.load(f)
+
+    chosen_name = random.choice(list(all_fishes.keys()))
+    fish_data = all_fishes[chosen_name]
+    size = random.randint(fish_data["min_size"], fish_data["max_size"])
+
+    comment = "コメントが見つかりませんでした"
+    for item in fish_data["comments"]:
+        if item["min"] <= size <= item["max"]:
+            comment = item["text"]
+            break
+
+    user_id = str(interaction.user.id)
+    users_data = load_user_data()
+
+    if user_id not in users_data:
+        users_data[user_id] = {
+            "name": interaction.user.name,
+            "coins": 100,
+            "inventory": {},
+            "veggies": {},
+            "dishes": {},
+        }
+
+    inventory = users_data[user_id]["inventory"]
+    current_max = inventory.get(chosen_name, {}).get("max_size", 0)
+    is_new_record = size > current_max
+
+    if size <= 40:
+        view = CatchOrReleaseView(
+            author=interaction.user,
+            fish_name=chosen_name,
+            size=size,
+            comment=comment,
+            is_new_record=is_new_record,
+            users_data=users_data,
+        )
+        await interaction.response.send_message(
+            f"🎣 **{chosen_name}（{size}cm）** が釣れた！\n{comment}\n⚠️ **40cm以下の小魚です！どうする？**",
+            view=view,
+        )
+    else:
+        if chosen_name not in inventory:
+            inventory[chosen_name] = {"sizes": [], "max_size": 0}
+        if "sizes" not in inventory[chosen_name]:
+            inventory[chosen_name]["sizes"] = []
+
+        inventory[chosen_name]["sizes"].append(size)
+        if is_new_record:
+            inventory[chosen_name]["max_size"] = size
+
+        save_user_data(users_data)
+        count = len(inventory[chosen_name]["sizes"])
+        record_text = " 👑 **自己ベスト更新！**" if is_new_record else ""
+
+        await interaction.response.send_message(
+            f"🎣 **{chosen_name}（{size}cm）** を釣り上げた！{record_text}\n{comment}\n📦（所持数: {count}匹 / 最大記録: {inventory[chosen_name]['max_size']}cm）"
+        )
+
+
+# 🥗 収穫処理の共通ロジック
+async def do_farm_logic(interaction: discord.Interaction):
+    json_path = os.path.join(base_dir, "jsonall", "veggies.json")
+    with open(json_path, "r", encoding="utf-8") as f:
+        all_veggies = json.load(f)
+
+    chosen_veggie = random.choice(list(all_veggies.keys()))
+    veggie_info = all_veggies[chosen_veggie]
+
+    user_id = str(interaction.user.id)
+    users_data = load_user_data()
+
+    if user_id not in users_data:
+        users_data[user_id] = {
+            "name": interaction.user.name,
+            "coins": 100,
+            "inventory": {},
+            "veggies": {},
+            "dishes": {},
+        }
+
+    user = users_data[user_id]
+    if "veggies" not in user:
+        user["veggies"] = {}
+
+    user["veggies"][chosen_veggie] = user["veggies"].get(chosen_veggie, 0) + 1
+    save_user_data(users_data)
+
+    await interaction.response.send_message(
+        f"🥗 **{chosen_veggie}** を収穫した！\n💬 {veggie_info.get('description', '')}\n📦（所持数: {user['veggies'][chosen_veggie]}個）"
+    )
+
+
 # --------------------------------------------------
 # 🖼️ UIクラス群（Modal & View）
 # --------------------------------------------------
@@ -198,7 +295,6 @@ class InventoryView(discord.ui.View):
 
         has_item = False
         for fish_name, data in inventory.items():
-            # sizes リストの長さで所持数を判定！
             sizes = data.get("sizes", [])
             count = len(sizes)
             max_size = data.get("max_size", 0)
@@ -209,6 +305,35 @@ class InventoryView(discord.ui.View):
 
         if not has_item:
             msg += "魚を持っていません！\n"
+
+        msg += "───────────────────"
+        await interaction.response.edit_message(content=msg, view=self)
+
+    # 🌟 新設: 野菜一覧ボタン！
+    @discord.ui.button(
+        label="🥗 野菜一覧", style=discord.ButtonStyle.success, row=0
+    )
+    async def show_veggies(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message(
+                "他の人のインベントリは操作できません！", ephemeral=True
+            )
+            return
+
+        veggies = self.user_data.get("veggies", {})
+        msg = f"🥗 **{self.author.display_name} さんの野菜バッグ** 🥗\n"
+        msg += "───────────────────\n"
+
+        has_item = False
+        for veggie_name, count in veggies.items():
+            if count > 0:
+                msg += f"🥗 **{veggie_name}**: {count}個\n"
+                has_item = True
+
+        if not has_item:
+            msg += "まだ野菜を持っていません！`!farm` で収穫しましょう！\n"
 
         msg += "───────────────────"
         await interaction.response.edit_message(content=msg, view=self)
@@ -242,7 +367,7 @@ class InventoryView(discord.ui.View):
         await interaction.response.edit_message(content=msg, view=self)
 
     @discord.ui.button(
-        label="📢 VCにお披露目", style=discord.ButtonStyle.success, row=1
+        label="📢 VCにお披露目", style=discord.ButtonStyle.secondary, row=1
     )
     async def share_to_vc(
         self, interaction: discord.Interaction, button: discord.ui.Button
@@ -269,7 +394,6 @@ class InventoryView(discord.ui.View):
             view=show_view,
             ephemeral=True,
         )
-
 
 # ② 新料理の命名モーダル
 class NameDishModal(discord.ui.Modal, title="🎉 新料理の命名！"):
@@ -430,15 +554,27 @@ class CookingView(discord.ui.View):
         # 素材・料理の混合選択肢を作成
         ingredient_options = []
 
+        # ① 魚を追加
         for name, data in user_inventory.items():
-            if data.get("count", 0) > 0:
+            count = len(data.get("sizes", []))
+            if count > 0:
                 ingredient_options.append(
                     discord.SelectOption(
-                        label=f"🐟 {name} ({data['count']}所持)",
-                        value=name,
+                        label=f"🐟 {name} ({count}匹所持)", value=name
                     )
                 )
 
+        # ② 野菜を追加
+        user_veggies = user_data.get("veggies", {})
+        for name, count in user_veggies.items():
+            if count > 0:
+                ingredient_options.append(
+                    discord.SelectOption(
+                        label=f"🥗 {name} ({count}個所持)", value=name
+                    )
+                )
+
+        # ③ 料理（中間素材）を追加
         for name, count in user_dishes.items():
             if count > 0:
                 ingredient_options.append(
@@ -512,8 +648,22 @@ class CookingView(discord.ui.View):
 
         # 2. 消費処理
         for item in self.selected_fishes:
-            if inventory.get(item, {}).get("count", 0) > 0:
-                inventory[item]["count"] -= 1
+            fish_count = len(inventory.get(item, {}).get("sizes", []))
+            veggie_count = user.get("veggies", {}).get(item, 0)
+            dish_count = dishes.get(item, 0)
+
+            if fish_count <= 0 and veggie_count <= 0 and dish_count <= 0:
+                await interaction.response.send_message(
+                    f"**{item}** の在庫が足りません！", ephemeral=True
+                )
+                return
+
+        # 消費処理（魚 ➔ 野菜 ➔ 料理の順で減らす）
+        for item in self.selected_fishes:
+            if len(inventory.get(item, {}).get("sizes", [])) > 0:
+                inventory[item]["sizes"].pop(0)  # 一番古い魚から消費
+            elif user.get("veggies", {}).get(item, 0) > 0:
+                user["veggies"][item] -= 1
             elif dishes.get(item, 0) > 0:
                 dishes[item] -= 1
 
@@ -696,7 +846,126 @@ class SellView(discord.ui.View):
             f"💰 **+{unit_price} NP** を獲得！（現在の所持金: **{user['coins']} NP**）"
         ) 
 
+# --------------------------------------------------
+# 🎮 メインメニュー View（/start 用）
+# --------------------------------------------------
+class MainMenuView(discord.ui.View):
 
+    def __init__(self, author):
+        super().__init__(timeout=120)  # 2分間操作可能
+        self.author = author
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message(
+                "これは他の人のメインメニューです！`/start` で自分用を開いてね！",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    # 1段目: メインアクション
+    @discord.ui.button(
+        label="🎣 釣りをする", style=discord.ButtonStyle.primary, row=0
+    )
+    async def btn_fish(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        # 既存の fish コマンド相当の処理を実行
+        await do_fish_logic(interaction)
+
+    @discord.ui.button(
+        label="🥗 野菜収穫", style=discord.ButtonStyle.success, row=0
+    )
+    async def btn_farm(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await do_farm_logic(interaction)
+
+    @discord.ui.button(
+        label="📦 インベントリ", style=discord.ButtonStyle.secondary, row=0
+    )
+    async def btn_bag(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        user_id = str(self.author.id)
+        users_data = load_user_data()
+        user_data = users_data.get(user_id, {})
+
+        view = InventoryView(author=self.author, user_data=user_data)
+        await interaction.response.send_message(
+            f"📦 **{self.author.display_name} さんのインベントリ**",
+            view=view,
+            ephemeral=True,
+        )
+
+    # 2段目: 経済・クラフト系
+    @discord.ui.button(
+        label="🍳 料理をする", style=discord.ButtonStyle.primary, row=1
+    )
+    async def btn_cook(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        user_id = str(self.author.id)
+        users_data = load_user_data()
+        user_data = users_data.get(user_id, {})
+
+        view = CookingView(author=self.author, user_data=user_data)
+        await interaction.response.send_message(
+            "🍳 調理器具と使う材料を選んでください！", view=view, ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="💰 魚を売る", style=discord.ButtonStyle.success, row=1
+    )
+    async def btn_sell(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        user_id = str(self.author.id)
+        users_data = load_user_data()
+        user_data = users_data.get(user_id, {})
+
+        json_path = os.path.join(base_dir, "jsonall", "fishes.json")
+        with open(json_path, "r", encoding="utf-8") as f:
+            all_fishes = json.load(f)
+
+        coins = user_data.get("coins", 0)
+        view = SellView(
+            author=self.author, user_data=user_data, all_fishes=all_fishes
+        )
+        await interaction.response.send_message(
+            f"🏧 **フィッシュマーケット**（所持金: **{coins} NP**）\n売却したい魚を選んでね！",
+            view=view,
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="📖 料理図鑑", style=discord.ButtonStyle.secondary, row=1
+    )
+    async def btn_recipes(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        recipes = load_recipes()
+        embed = discord.Embed(
+            title="📖 発見済み料理レシピ図鑑", color=discord.Color.gold()
+        )
+
+        has_recipe = False
+        for appliance, dish_list in recipes.items():
+            if dish_list:
+                has_recipe = True
+                text = ""
+                for dish in dish_list:
+                    ingredients = ", ".join(dish.get("ingredients", []))
+                    text += f"・**{dish['name']}** (考案: {dish.get('author', '不明')})\n   └ 材料: {ingredients}\n"
+                embed.add_field(
+                    name=f"🍳 {appliance}", value=text, inline=False
+                )
+
+        if not has_recipe:
+            embed.description = "まだ誰も料理を発見していません！"
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # --------------------------------------------------
@@ -705,7 +974,11 @@ class SellView(discord.ui.View):
 
 
 # 1. インベントリ確認コマンド
-@bot.command(aliases=["inv", "bag"])
+@bot.hybrid_command(
+    name="bag",
+    aliases=["inv", "バッグ"],
+    description="インベントリを表示します（VCお披露目も可能）",
+)
 async def inventory(ctx):
     user_id = str(ctx.author.id)
     users_data = load_user_data()
@@ -719,7 +992,7 @@ async def inventory(ctx):
 
 
 # 2. 釣りコマンド
-@bot.command()
+@bot.hybrid_command(name="fish", description="魚を釣り上げます")
 async def fish(ctx):
     json_path = os.path.join(base_dir, "jsonall", "fishes.json")
     with open(json_path, "r", encoding="utf-8") as f:
@@ -795,8 +1068,10 @@ async def fish(ctx):
 
 
 # 3. 料理コマンド
-@bot.command(aliases=["cook", "料理"])
-async def cooking(ctx):
+@bot.hybrid_command(
+    name="cook", aliases=["料理"], description="料理をクラフト・命名します"
+)
+async def cook(ctx):
     user_id = str(ctx.author.id)
     users_data = load_user_data()
 
@@ -820,8 +1095,12 @@ async def cooking(ctx):
 
 
 # 4. レシピ図鑑コマンド
-@bot.command(aliases=["recipes", "レシピ"])
-async def recipe_book(ctx):
+@bot.hybrid_command(
+    name="recipes",
+    aliases=["レシピ"],
+    description="発見された全料理のレシピ図鑑を表示します",
+)
+async def show_recipes(ctx):
     recipes = load_recipes()
 
     if not recipes:
@@ -944,7 +1223,9 @@ class SellView(discord.ui.View):
 # --------------------------------------------------
 # 💰 売却コマンド
 # --------------------------------------------------
-@bot.command(aliases=["sell", "売却"])
+@bot.hybrid_command(
+    name="sell", aliases=["売却"], description="魚を市場に売却してNPを獲得します"
+)
 async def sell_item(ctx):
     user_id = str(ctx.author.id)
     users_data = load_user_data()
@@ -973,5 +1254,140 @@ async def sell_item(ctx):
         view=view,
     )
 
+
+# --------------------------------------------------
+# 🥗 野菜収穫コマンド
+# --------------------------------------------------
+@bot.hybrid_command(
+    name="farm",
+    aliases=["収穫", "野菜"],
+    description="野菜を収穫します",
+)
+async def harvest_veggies(ctx):
+    json_path = os.path.join(base_dir, "jsonall", "veggies.json")
+
+    if not os.path.exists(json_path):
+        await ctx.send(
+            "⚠️ `jsonall/veggies.json` が見つかりません！ファイルを作成してください！"
+        )
+        return
+
+    with open(json_path, "r", encoding="utf-8") as f:
+        all_veggies = json.load(f)
+
+    veggie_names = list(all_veggies.keys())
+    chosen_veggie = random.choice(veggie_names)
+    veggie_info = all_veggies[chosen_veggie]
+
+    user_id = str(ctx.author.id)
+    users_data = load_user_data()
+
+    if user_id not in users_data:
+        users_data[user_id] = {
+            "name": ctx.author.name,
+            "coins": 100,
+            "inventory": {},
+            "veggies": {},
+            "dishes": {},
+        }
+
+    user = users_data[user_id]
+    if "veggies" not in user:
+        user["veggies"] = {}
+
+    veggies = user["veggies"]
+    veggies[chosen_veggie] = veggies.get(chosen_veggie, 0) + 1
+
+    save_user_data(users_data)
+
+    await ctx.send(
+        f"🥗 **{chosen_veggie}** を収穫した！\n"
+        f"💬 {veggie_info.get('description', '')}\n"
+        f"📦（所持数: {veggies[chosen_veggie]}個）"
+    )
+
+# --------------------------------------------------
+# 📖 にゃっこヘルプコマンド
+# --------------------------------------------------
+@bot.hybrid_command(
+    name="nyakko_help",
+    aliases=["nyakko", "にゃっこヘルプ"],
+    description="にゃっこBotのコマンド一覧と使い方を表示します",
+)
+async def nyakko_help(ctx):
+    embed = discord.Embed(
+        title="🐱 にゃっこBot コマンド一覧",
+        description="`/`（スラッシュ）を入力すると選択肢から簡単に実行できます！",
+        color=discord.Color.teal(),
+    )
+
+    embed.add_field(
+        name="🎣 釣り・収穫",
+        value=(
+            "`/fish` : 魚を釣る（40cm以下はリリース選択可）\n"
+            "`/farm` : 野菜を収穫する"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🍳 調理・レシピ",
+        value=(
+            "`/cook` : 器具と素材を選んで料理をクラフト・命名！\n"
+            "`/recipes` : 発見済みの料理図鑑を見る"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="📦 アイテム・マーケット",
+        value=(
+            "`/bag` : 所持アイテムの確認（VCお披露目もここから！）\n"
+            "`/sell` : 魚を売って NP（コイン）をゲット"
+        ),
+        inline=False,
+    )
+
+    embed.set_footer(text="💡 スラッシュコマンド（/）に対応しました！")
+    await ctx.send(embed=embed)
+
+@bot.event
+async def on_ready():
+    # スラッシュコマンド（App Commands）をDiscordサーバーに同期
+    try:
+        synced = await bot.tree.sync()
+        print(f"Logged in as {bot.user}")
+        print(f"✨ {len(synced)} 個のスラッシュコマンドを同期しました！")
+    except Exception as e:
+        print(f"同期エラー: {e}")
+
+# --------------------------------------------------
+# 🚀 メインメニューコマンド（/start）
+# --------------------------------------------------
+@bot.hybrid_command(
+    name="start",
+    aliases=["スタート", "menu"],
+    description="にゃっこBotのメインパネルを開きます（全機能がボタンで操作可能）",
+)
+async def start_menu(ctx):
+    embed = discord.Embed(
+        title="🐱 にゃっこBot メインメニュー",
+        description="下のボタンを押すだけで、全ての機能が遊べます！",
+        color=discord.Color.blue(),
+    )
+    embed.add_field(
+        name="🎮 遊べる機能",
+        value=(
+            "🎣 **釣りをする** : 魚を吊り上げます\n"
+            "🥗 **野菜収穫** : 料理に使う野菜をゲット\n"
+            "📦 **インベントリ** : 手持ち確認・VCお披露目\n"
+            "🍳 **料理をする** : クラフト＆新レシピ考案\n"
+            "💰 **魚を売る** : NPを獲得\n"
+            "📖 **料理図鑑** : レシピ一覧をチェック"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="💡 ボタンを押してゲームを開始しよう！")
+
+    view = MainMenuView(author=ctx.author)
+    await ctx.send(embed=embed, view=view)
 
 bot.run(TOKEN)
