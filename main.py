@@ -1895,6 +1895,85 @@ class MainMenuView(discord.ui.View):
         self.stop()
         # このパネル（メッセージ）自体を削除してログを綺麗にする！
         await interaction.message.delete()
+    @discord.ui.button(
+        label="📊 ランキング",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
+    async def btn_rank(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        users_data = load_user_data()
+        if not users_data:
+            await interaction.response.send_message(
+                "⚠️ まだユーザーデータがありません！", ephemeral=True
+            )
+            return
+
+        # 1. 💰 所持金ランキング TOP5
+        coins_rank = sorted(
+            users_data.values(), key=lambda u: u.get("coins", 0), reverse=True
+        )[:5]
+
+        # 2. 🐟 大物ランキング TOP5
+        biggest_fish_list = []
+        for u in users_data.values():
+            user_name = u.get("name", "Unknown")
+            max_size = 0.0
+            best_fish_name = ""
+
+            inventory = u.get("inventory", {})
+            for fish_name, f_data in inventory.items():
+                f_max = f_data.get("max_size", 0.0)
+                if f_max > max_size:
+                    max_size = f_max
+                    best_fish_name = fish_name
+
+            if max_size > 0:
+                biggest_fish_list.append(
+                    {
+                        "name": user_name,
+                        "fish": best_fish_name,
+                        "size": max_size,
+                    }
+                )
+
+        fish_rank = sorted(
+            biggest_fish_list, key=lambda x: x["size"], reverse=True
+        )[:5]
+
+        # 📊 Embed の組み立て
+        embed = discord.Embed(
+            title="🏆 サーバ内ランキング TOP 5",
+            color=discord.Color.gold(),
+        )
+
+        # 所持金部門
+        money_text = ""
+        for i, u in enumerate(coins_rank, 1):
+            medal = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i - 1]
+            money_text += f"{medal} **{u.get('name', 'Unknown')}**: {u.get('coins', 0):,} NP\n"
+        embed.add_field(
+            name="💰 富豪ランキング",
+            value=money_text if money_text else "データがありません",
+            inline=False,
+        )
+
+        # 大物部門（小数点2桁）
+        fish_text = ""
+        for i, item in enumerate(fish_rank, 1):
+            medal = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i - 1]
+            fish_text += f"{medal} **{item['name']}**: {item['fish']} **{item['size']:.2f} cm**\n"
+        embed.add_field(
+            name="🐟 釣りの大物記録",
+            value=fish_text if fish_text else "まだ誰も魚を釣っていません",
+            inline=False,
+        )
+
+        view = DeleteMessageView(author=self.author)
+        await interaction.response.send_message(
+            embed=embed, view=view, ephemeral=True
+        )
 
 
 class DeleteMessageView(discord.ui.View):
@@ -2037,6 +2116,84 @@ async def cook(ctx):
 
     view = CookingView(author=ctx.author, user_data=user_data)
     await ctx.send("🍳 **クッキングタイム！** 器具と材料を選んでね！", view=view)
+
+# --------------------------------------------------
+# 📊 サーバ内ランキング コマンド
+# --------------------------------------------------
+@bot.hybrid_command(
+    name="rank",
+    aliases=["ランキング", "順位"],
+    description="サーバー内の所持金、大物記録ランキングを表示します",
+)
+async def rank_command(ctx):
+    users_data = load_user_data()
+    if not users_data:
+        await ctx.send("⚠️ まだユーザーデータがありません！")
+        return
+
+    # 1. 💰 所持金ランキング TOP5
+    coins_rank = sorted(
+        users_data.values(), key=lambda u: u.get("coins", 0), reverse=True
+    )[:5]
+
+    # 2. 🐟 大物ランキング TOP5（小数点2桁！）
+    biggest_fish_list = []
+    for u in users_data.values():
+        user_name = u.get("name", "Unknown")
+        max_size = 0.0
+        best_fish_name = ""
+
+        inventory = u.get("inventory", {})
+        for fish_name, f_data in inventory.items():
+            f_max = f_data.get("max_size", 0.0)
+            if f_max > max_size:
+                max_size = f_max
+                best_fish_name = fish_name
+
+        if max_size > 0:
+            biggest_fish_list.append(
+                {
+                    "name": user_name,
+                    "fish": best_fish_name,
+                    "size": max_size,
+                }
+            )
+
+    fish_rank = sorted(
+        biggest_fish_list, key=lambda x: x["size"], reverse=True
+    )[:5]
+
+    # 📊 Embed の組み立て
+    embed = discord.Embed(
+        title="🏆 サーバ内ランキング TOP 5",
+        color=discord.Color.gold(),
+    )
+
+    # 富豪部門
+    money_text = ""
+    for i, u in enumerate(coins_rank, 1):
+        medal = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i - 1]
+        money_text += f"{medal} **{u.get('name', 'Unknown')}**: {u.get('coins', 0):,} NP\n"
+    embed.add_field(
+        name="💰 富豪ランキング",
+        value=money_text if money_text else "データがありません",
+        inline=False,
+    )
+
+    # 大物部門（小数点2桁）
+    fish_text = ""
+    for i, item in enumerate(fish_rank, 1):
+        medal = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i - 1]
+        fish_text += f"{medal} **{item['name']}**: {item['fish']} **{item['size']:.2f} cm**\n"
+    embed.add_field(
+        name="🐟 釣りの大物記録",
+        value=fish_text if fish_text else "まだ誰も魚を釣っていません",
+        inline=False,
+    )
+
+    # 🌟 送信＆閉じるボタン
+    view = DeleteMessageView(author=ctx.author)
+    await ctx.send(embed=embed, view=view)
 
 
 # 4. レシピ図鑑コマンド
@@ -2399,54 +2556,90 @@ async def start_menu(ctx):
     await ctx.send(embed=embed, view=view)
 
 
+# --------------------------------------------------
+# 📊 サーバ内ランキング コマンド（/rank & !rank 両対応）
+# --------------------------------------------------
 @bot.hybrid_command(
-    name="quest",
-    aliases=["クエスト", "デイリー"],
-    description="本日のデイリーリクエストを確認・納品します",
+    name="rank",
+    aliases=["ランキング", "順位"],
+    description="サーバー内の所持金、大物記録ランキングを表示します",
 )
-async def quest_command(ctx):
-    user_id = str(ctx.author.id)
+async def rank_command(ctx):
     users_data = load_user_data()
-    user_data = users_data.get(user_id, {})
-
-    q_data = get_daily_quest(user_data)
-    save_user_data(users_data)
-
-    if not q_data:
-        await ctx.send("⚠️ クエストデータが読み込めませんでした！")
+    if not users_data:
+        await ctx.send("⚠️ まだユーザーデータがありません！")
         return
 
-    # 🔒 2. レシピが10種類未満（ロック中）の表示処理！
-    if q_data.get("locked"):
-        msg = (
-            f"🔒 **デイリークエストはまだ解放されていません！**\n"
-            f"───────────────────\n"
-            f"🍳 みんなで発見したレシピ: **{q_data['count']} / {q_data['needed']} 種類**\n"
-            f"💬 「料理のレシピが **10種類** を超えると、にゃっこから日替わりのお願いが届くようになるにゃ！」\n"
-            f"👉 `/cook` で色々な食材や器具を試して、新しいレシピを発見しよう！\n"
-            f"───────────────────"
-        )
-        view = DeleteMessageView(author=ctx.author)
-        await ctx.send(msg, view=view)
-        return
+    # 1. 💰 所持金ランキング TOP5
+    coins_rank = sorted(
+        users_data.values(), key=lambda u: u.get("coins", 0), reverse=True
+    )[:5]
 
-    # 🔓 10種類以上ある場合の通常表示
-    quest = q_data["quest"]
-    status_text = (
-        "✅ **【達成済み】**" if q_data["completed"] else "⏳ **【挑戦中】**"
+    # 2. 🐟 大物ランキング TOP5（小数点2桁！）
+    biggest_fish_list = []
+    for u in users_data.values():
+        user_name = u.get("name", "Unknown")
+        max_size = 0.0
+        best_fish_name = ""
+
+        inventory = u.get("inventory", {})
+        for fish_name, f_data in inventory.items():
+            f_max = f_data.get("max_size", 0.0)
+            if f_max > max_size:
+                max_size = f_max
+                best_fish_name = fish_name
+
+        if max_size > 0:
+            biggest_fish_list.append(
+                {
+                    "name": user_name,
+                    "fish": best_fish_name,
+                    "size": max_size,
+                }
+            )
+
+    fish_rank = sorted(
+        biggest_fish_list, key=lambda x: x["size"], reverse=True
+    )[:5]
+
+    # 📊 Embed の組み立て
+    embed = discord.Embed(
+        title="🏆 サーバ内ランキング TOP 5",
+        color=discord.Color.gold(),
     )
 
-    msg = (
-        f"📅 **本日の限定リクエスト**（{q_data['date']}）\n"
-        f"ステータス: {status_text}\n"
-        f"───────────────────\n"
-        f"💬 **にゃっこからの願い**: {quest['description']}\n"
-        f"🎯 **目標**: **{quest['item']}** × `{quest['count']}個` を納品\n"
-        f"💰 **報酬**: **{quest['reward_coins']} NP**\n"
-        f"───────────────────"
+    # 富豪部門
+    money_text = ""
+    for i, u in enumerate(coins_rank, 1):
+        medal = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i - 1]
+        money_text += f"{medal} **{u.get('name', 'Unknown')}**: {u.get('coins', 0):,} NP\n"
+    embed.add_field(
+        name="💰 富豪ランキング",
+        value=money_text if money_text else "データがありません",
+        inline=False,
     )
 
-    view = QuestView(author=ctx.author, user_data=user_data)
-    await ctx.send(msg, view=view)
+    # 大物部門（小数点2桁）
+    fish_text = ""
+    for i, item in enumerate(fish_rank, 1):
+        medal = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i - 1]
+        fish_text += f"{medal} **{item['name']}**: {item['fish']} **{item['size']:.2f} cm**\n"
+    embed.add_field(
+        name="🐟 釣りの大物記録",
+        value=fish_text if fish_text else "まだ誰も魚を釣っていません",
+        inline=False,
+    )
+
+    view = DeleteMessageView(author=ctx.author)
+    await ctx.send(embed=embed, view=view)
+
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user.name}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} command(s)")
+    except Exception as e:
+        print(f"Failed to sync commands: {e}")
 
 bot.run(TOKEN)
