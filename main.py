@@ -1538,7 +1538,7 @@ class ShopView(discord.ui.View):
         meat_view = BuyMeatView(author=self.author, user_data=user)
         await interaction.response.send_message(
             f"🥩 **にゃっこ精肉店**（所持金: **{user.get('coins', 0)} NP**）\n"
-            f"料理のメインディッシュに使えるお肉を購入できます！",
+            f"料理のメインディッシュに使えるお肉を購入できます！(牛乳もここで買えます!)",
             view=meat_view,
             ephemeral=True,
         )
