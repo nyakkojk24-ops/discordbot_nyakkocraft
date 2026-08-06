@@ -23,37 +23,45 @@ recipes_json_path = os.path.join(base_dir, "data", "recipes.json")
 # --------------------------------------------------
 # 📁 データの読み書き関数
 # --------------------------------------------------
-def load_recipes():
-    """recipes.json を読み込む"""
-    if not os.path.exists(recipes_json_path):
+
+def get_guild_dir(guild_id):
+    """サーバーごとのデータフォルダパスを取得・作成する"""
+    path = os.path.join(base_dir, "data", str(guild_id))
+    if not os.path.exists(path):
+        os.makedirs(path)
+    return path
+
+def load_recipes(guild_id):
+    """サーバーごとの recipes.json を読み込む"""
+    guild_dir = get_guild_dir(guild_id)
+    json_path = os.path.join(guild_dir, "recipes.json")
+    if not os.path.exists(json_path):
         return {}
-    with open(recipes_json_path, "r", encoding="utf-8") as f:
+    with open(json_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def save_recipes(data):
-    """recipes.json にデータを保存する"""
-    data_dir = os.path.dirname(recipes_json_path)
-    if not os.path.exists(data_dir):
-        os.makedirs(data_dir)
-    with open(recipes_json_path, "w", encoding="utf-8") as f:
+def save_recipes(guild_id, data):
+    """サーバーごとの recipes.json に保存する"""
+    guild_dir = get_guild_dir(guild_id)
+    json_path = os.path.join(guild_dir, "recipes.json")
+    with open(json_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def load_user_data():
-    """users.json を読み込む"""
-    if not os.path.exists(users_json_path):
+def load_user_data(guild_id):
+    guild_dir = get_guild_dir(guild_id)
+    json_path = os.path.join(guild_dir, "users.json")
+    if not os.path.exists(json_path):
         return {}
-    with open(users_json_path, "r", encoding="utf-8") as f:
+    with open(json_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def save_user_data(data):
-    """users.json にデータを保存する"""
-    data_dir = os.path.dirname(users_json_path)
-    if not os.path.exists(data_dir):
-        os.makedirs(data_dir)
-    with open(users_json_path, "w", encoding="utf-8") as f:
+def save_user_data(guild_id, data):
+    guild_dir = get_guild_dir(guild_id)
+    json_path = os.path.join(guild_dir, "users.json")
+    with open(json_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
@@ -130,8 +138,9 @@ async def do_farm_logic(interaction: discord.Interaction):
     chosen_veggie = random.choice(list(all_veggies.keys()))
     veggie_info = all_veggies[chosen_veggie]
 
+    guild_id = interaction.guild_id or "dm"
     user_id = str(interaction.user.id)
-    users_data = load_user_data()
+    users_data = load_user_data(guild_id)
 
     if user_id not in users_data:
         users_data[user_id] = {
@@ -147,7 +156,8 @@ async def do_farm_logic(interaction: discord.Interaction):
         user["veggies"] = {}
 
     user["veggies"][chosen_veggie] = user["veggies"].get(chosen_veggie, 0) + 1
-    save_user_data(users_data)
+    guild_id = interaction.guild_id or "dm"
+    save_user_data(guild_id, users_data)
 
     await interaction.response.send_message(
         f"🥗 **{chosen_veggie}** を収穫した！\n💬 {veggie_info.get('description', '')}\n📦（所持数: {user['veggies'][chosen_veggie]}個）"
@@ -159,8 +169,9 @@ async def do_farm_logic(interaction: discord.Interaction):
 async def do_fish_logic_edit(
     interaction: discord.Interaction, view: discord.ui.View
 ):
+    guild_id = interaction.guild_id or "dm"
     user_id = str(interaction.user.id)
-    users_data = load_user_data()
+    users_data = load_user_data(guild_id)
 
     if user_id not in users_data:
         users_data[user_id] = {
@@ -247,7 +258,8 @@ async def do_fish_logic_edit(
         if is_new_record:
             inventory[chosen_name]["max_size"] = size
 
-        save_user_data(users_data)
+        guild_id = interaction.guild_id or "dm"
+        save_user_data(guild_id, users_data)
         count = len(inventory[chosen_name]["sizes"])
         record_text = " 👑 **自己ベスト更新！**" if is_new_record else ""
 
@@ -270,8 +282,9 @@ async def do_fish_logic_edit(
 async def do_dive_logic_edit(
     interaction: discord.Interaction, view: discord.ui.View
 ):
+    guild_id = interaction.guild_id or "dm"
     user_id = str(interaction.user.id)
-    users_data = load_user_data()
+    users_data = load_user_data(guild_id)
 
     if user_id not in users_data:
         users_data[user_id] = {
@@ -323,7 +336,8 @@ async def do_dive_logic_edit(
         user["seafood"] = {}
 
     user["seafood"][chosen_item] = user["seafood"].get(chosen_item, 0) + 1
-    save_user_data(users_data)
+    guild_id = interaction.guild_id or "dm"
+    save_user_data(guild_id, users_data)
 
     broke_text = "\n⚠️ **ヤスが壊れてしまった！**" if current_spear == 0 else ""
 
@@ -346,8 +360,9 @@ async def do_dive_logic_edit(
 async def do_farm_logic_edit(
     interaction: discord.Interaction, view: discord.ui.View
 ):
+    guild_id = interaction.guild_id or "dm"
     user_id = str(interaction.user.id)
-    users_data = load_user_data()
+    users_data = load_user_data(guild_id)
 
     if user_id not in users_data:
         users_data[user_id] = {
@@ -393,8 +408,8 @@ async def do_farm_logic_edit(
         user["veggies"] = {}
 
     user["veggies"][chosen_veggie] = user["veggies"].get(chosen_veggie, 0) + 1
-    save_user_data(users_data)
-
+    guild_id = interaction.guild_id or "dm"
+    save_user_data(guild_id, users_data)
     broke_text = "\n⚠️ **クワが壊れてしまった！**" if current_hoe == 0 else ""
 
     await interaction.response.edit_message(
@@ -547,7 +562,8 @@ class InventoryView(discord.ui.View):
             return
 
         # 最新データをロードして表示更新
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         self.user_data = users_data.get(str(self.author.id), {})
 
         msg = build_inventory_text(self.author, self.user_data)
@@ -713,7 +729,8 @@ class DishNameModal(discord.ui.Modal, title="🍳 料理の名前を決めよう
             )
         )
 
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user_id = str(interaction.user.id)
 
         if user_id not in users_data:
@@ -759,7 +776,8 @@ class DishNameModal(discord.ui.Modal, title="🍳 料理の名前を決めよう
             "stars": final_stars,
         }
 
-        save_user_data(users_data)
+        guild_id = interaction.guild_id or "dm"
+        save_user_data(guild_id, users_data)
 
         # 結果表示Embed
         star_display = "⭐" * final_stars
@@ -1001,7 +1019,7 @@ class CatchOrReleaseView(discord.ui.View):
         if self.is_new_record:
             inventory[self.fish_name]["max_size"] = self.size
 
-        save_user_data(self.users_data)
+        save_user_data(self.guild_id, self.users_data)
         count = len(inventory[self.fish_name]["sizes"])
 
         main_view = MainMenuView(author=self.author)
@@ -1080,7 +1098,8 @@ class BuySeasoningView(discord.ui.View):
         item_name = interaction.data["values"][0]
         price = self.SEASONINGS[item_name][0]
 
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user = users_data.get(str(self.author.id), {})
         coins = user.get("coins", 0)
 
@@ -1099,7 +1118,8 @@ class BuySeasoningView(discord.ui.View):
             user["seasonings"] = {}
         user["seasonings"][item_name] = user["seasonings"].get(item_name, 0) + 1
 
-        save_user_data(users_data)
+        guild_id = interaction.guild_id or "dm"
+        save_user_data(guild_id, users_data)
 
         await interaction.response.send_message(
             f"✨ **{item_name}** を1個購入しました！\n"
@@ -1183,7 +1203,8 @@ class BuyMeatView(discord.ui.View):
         meats = load_meats()
         price = meats.get(item_name, {}).get("price", 100)
 
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user = users_data.get(str(self.author.id), {})
         coins = user.get("coins", 0)
 
@@ -1200,7 +1221,8 @@ class BuyMeatView(discord.ui.View):
             user["meats"] = {}
         user["meats"][item_name] = user["meats"].get(item_name, 0) + 1
 
-        save_user_data(users_data)
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
 
         await interaction.response.send_message(
             f"✨ **{item_name}** を1個購入しました！\n"
@@ -1298,7 +1320,8 @@ class IndividualSellView(discord.ui.View):
 
         if earned > 0:
             user["coins"] = user.get("coins", 0) + earned
-            save_user_data(users_data)
+            guild_id = interaction.guild_id or "dm"
+            users_data = load_user_data(guild_id)
             await interaction.response.send_message(
                 f"💵 **{item_name}** を売却しました！\n"
                 f"売却額: **+{earned} NP** (所持金: **{user['coins']} NP**)",
@@ -1328,7 +1351,8 @@ class ShopView(discord.ui.View):
     async def buy_rod(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user = users_data.get(str(self.author.id), {})
         coins = user.get("coins", 0)
 
@@ -1343,7 +1367,8 @@ class ShopView(discord.ui.View):
             user["durability"] = {}
         user["durability"]["fishing_rod"] = 10
 
-        save_user_data(users_data)
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         await interaction.response.send_message(
             f"✨ **釣竿を修理しました！** (耐久: 10/10)\n💰 残高: **{user['coins']} NP**",
             ephemeral=True,
@@ -1357,7 +1382,8 @@ class ShopView(discord.ui.View):
     async def buy_hoe(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user = users_data.get(str(self.author.id), {})
         coins = user.get("coins", 0)
 
@@ -1372,7 +1398,8 @@ class ShopView(discord.ui.View):
             user["durability"] = {}
         user["durability"]["hoe"] = 10
 
-        save_user_data(users_data)
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         await interaction.response.send_message(
             f"✨ **クワを修理しました！** (耐久: 10/10)\n💰 残高: **{user['coins']} NP**",
             ephemeral=True,
@@ -1386,7 +1413,8 @@ class ShopView(discord.ui.View):
     async def buy_spear(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user = users_data.get(str(self.author.id), {})
         coins = user.get("coins", 0)
 
@@ -1401,7 +1429,8 @@ class ShopView(discord.ui.View):
             user["durability"] = {}
         user["durability"]["spear"] = 10
 
-        save_user_data(users_data)
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         await interaction.response.send_message(
             f"✨ **ヤスを修理しました！** (耐久: 10/10)\n💰 残高: **{user['coins']} NP**",
             ephemeral=True,
@@ -1414,7 +1443,8 @@ class ShopView(discord.ui.View):
     async def buy_seasoning(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user = users_data.get(str(self.author.id), {})
 
         seasoning_view = BuySeasoningView(author=self.author, user_data=user)
@@ -1434,7 +1464,8 @@ class ShopView(discord.ui.View):
     async def sell_all(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user = users_data.get(str(self.author.id), {})
         inventory = user.get("inventory", {})
         veggies = user.get("veggies", {})
@@ -1478,7 +1509,8 @@ class ShopView(discord.ui.View):
             return
 
         user["coins"] = user.get("coins", 0) + total_earned
-        save_user_data(users_data)
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
 
         # 画面の所持金表示も即座に更新！
         await interaction.response.edit_message(
@@ -1499,7 +1531,8 @@ class ShopView(discord.ui.View):
     async def buy_meat(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user = users_data.get(str(self.author.id), {})
 
         meat_view = BuyMeatView(author=self.author, user_data=user)
@@ -1516,7 +1549,8 @@ class ShopView(discord.ui.View):
     async def open_select_sell(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user = users_data.get(str(self.author.id), {})
 
         sell_select_view = IndividualSellView(
@@ -1582,7 +1616,8 @@ class QuestView(discord.ui.View):
             )
             return
 
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user = users_data.get(str(self.author.id), {})
         q_data = get_daily_quest(user)
 
@@ -1622,7 +1657,8 @@ class QuestView(discord.ui.View):
         # 報酬の付与とステータス更新
         q_data["completed"] = True
         user["coins"] = user.get("coins", 0) + reward
-        save_user_data(users_data)
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
 
         await interaction.response.edit_message(
             content=(
@@ -1687,7 +1723,8 @@ class MainMenuView(discord.ui.View):
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
         user_id = str(self.author.id)
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user_data = users_data.get(user_id, {})
 
         view = InventoryView(author=self.author, user_data=user_data)
@@ -1713,7 +1750,8 @@ class MainMenuView(discord.ui.View):
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
         # 🌟 ここで最新のユーザーデータをJSONから読み直す！
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user_data = users_data.get(str(self.author.id), {})
 
         # 最新の user_data を渡して View を作成
@@ -1732,7 +1770,8 @@ class MainMenuView(discord.ui.View):
     async def btn_sell(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user_data = users_data.get(str(self.author.id), {})
 
         # 上書き用の ShopView を作成
@@ -1786,10 +1825,12 @@ class MainMenuView(discord.ui.View):
     async def btn_quest(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user_data = users_data.get(str(self.author.id), {})
         q_data = get_daily_quest(user_data)
-        save_user_data(users_data)
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
 
         # 🔒 ロック中の表示分岐
         if q_data.get("locked"):
@@ -1846,7 +1887,8 @@ class MainMenuView(discord.ui.View):
     async def btn_rank(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         if not users_data:
             await interaction.response.send_message(
                 "⚠️ まだユーザーデータがありません！", ephemeral=True
@@ -1948,7 +1990,8 @@ class DeleteMessageView(discord.ui.View):
 )
 async def inventory(ctx):
     user_id = str(ctx.author.id)
-    users_data = load_user_data()
+    guild_id = ctx.guild.id if ctx.guild else "dm"
+    users_data = load_user_data(guild_id)
     user_data = users_data.get(user_id, {})
 
     msg = build_inventory_text(ctx.author, user_data)
@@ -1975,7 +2018,8 @@ async def fish(ctx):
             break
 
     user_id = str(ctx.author.id)
-    users_data = load_user_data()
+    guild_id = ctx.guild.id if ctx.guild else "dm"
+    users_data = load_user_data(guild_id)
 
     if user_id not in users_data:
         users_data[user_id] = {
@@ -2022,7 +2066,8 @@ async def fish(ctx):
         if is_new_record:
             inventory[chosen_name]["max_size"] = size
 
-        save_user_data(users_data)
+        guild_id = ctx.guild.id if ctx.guild else "dm"
+        users_data = load_user_data(guild_id)
 
         count = len(inventory[chosen_name]["sizes"])
         record_text = " 👑 **自己ベスト更新！**" if is_new_record else ""
@@ -2040,7 +2085,8 @@ async def fish(ctx):
 )
 async def cook(ctx):
     user_id = str(ctx.author.id)
-    users_data = load_user_data()
+    guild_id = ctx.guild.id if ctx.guild else "dm"
+    users_data = load_user_data(guild_id)
 
     user_data = users_data.get(user_id, {})
     user_inventory = user_data.get("inventory", {})
@@ -2153,7 +2199,8 @@ class SellView(discord.ui.View):
         fish_idx = int(val_parts[1])
         fish_size = int(val_parts[2])
 
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user_id = str(self.author.id)
         user = users_data.get(user_id, {})
         inventory = user.get("inventory", {})
@@ -2179,7 +2226,8 @@ class SellView(discord.ui.View):
         sizes.pop(fish_idx)
         user["coins"] = user.get("coins", 0) + unit_price
 
-        save_user_data(users_data)
+        guild_id = interaction.guild_id or "dm"
+        save_user_data(guild_id, self.users_data)
 
         await interaction.response.send_message(
             f"💸 **{chosen_fish}（{fish_size:.2f}cm）** を売却しました！\n"
@@ -2195,7 +2243,8 @@ class SellView(discord.ui.View):
 )
 async def sell_item(ctx):
     user_id = str(ctx.author.id)
-    users_data = load_user_data()
+    guild_id = ctx.guild.id if ctx.guild else "dm"
+    users_data = load_user_data(guild_id)
     user_data = users_data.get(user_id, {})
 
     inventory = user_data.get("inventory", {})
@@ -2247,7 +2296,8 @@ async def harvest_veggies(ctx):
     veggie_info = all_veggies[chosen_veggie]
 
     user_id = str(ctx.author.id)
-    users_data = load_user_data()
+    guild_id = ctx.guild.id if ctx.guild else "dm"
+    users_data = load_user_data(guild_id)
 
     if user_id not in users_data:
         users_data[user_id] = {
@@ -2265,7 +2315,8 @@ async def harvest_veggies(ctx):
     veggies = user["veggies"]
     veggies[chosen_veggie] = veggies.get(chosen_veggie, 0) + 1
 
-    save_user_data(users_data)
+    guild_id = ctx.guild.id if ctx.guild else "dm"
+    users_data = load_user_data(guild_id)
 
     await ctx.send(
         f"🥗 **{chosen_veggie}** を収穫した！\n"
@@ -2280,7 +2331,8 @@ async def harvest_veggies(ctx):
 )
 async def dive_command(ctx):
     user_id = str(ctx.author.id)
-    users_data = load_user_data()
+    guild_id = ctx.guild.id if ctx.guild else "dm"
+    users_data = load_user_data(guild_id)
 
     if user_id not in users_data:
         users_data[user_id] = {
@@ -2326,7 +2378,8 @@ async def dive_command(ctx):
         user["seafood"] = {}
 
     user["seafood"][chosen_item] = user["seafood"].get(chosen_item, 0) + 1
-    save_user_data(users_data)
+    guild_id = ctx.guild.id if ctx.guild else "dm"
+    users_data = load_user_data(guild_id)
 
     broke_text = "\n⚠️ **ヤスが壊れてしまった！**" if current_spear == 0 else ""
 
@@ -2430,7 +2483,8 @@ async def start_menu(ctx):
     description="サーバー内の所持金、大物記録ランキングを表示します",
 )
 async def rank_command(ctx):
-    users_data = load_user_data()
+    guild_id = ctx.guild.id if ctx.guild else "dm"
+    users_data = load_user_data(guild_id)
     if not users_data:
         await ctx.send("⚠️ まだユーザーデータがありません！")
         return
