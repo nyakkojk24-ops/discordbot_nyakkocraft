@@ -222,6 +222,7 @@ __marimo__/
 
 # 非公開にしたいデータファイル
 fishes.json
+
 veggies.json
 
 # ユーザーの所持品データ（非公開）
