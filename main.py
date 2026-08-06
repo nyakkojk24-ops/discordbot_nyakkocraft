@@ -619,11 +619,11 @@ class SelectRecipeView(discord.ui.View):
 class CookingView(discord.ui.View):
 
     def __init__(self, author, user_data):
-        super().__init__(timeout=120)
+        super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.selected_appliance = "ミキサー"
-        self.selected_fishes = []
+        self.selected_appliance = "ミキサー"  # 初期値を設定しておく
+        self.selected_fishes = []  # 選ばれた素材リスト（初期値は空）
 
         user_inventory = user_data.get("inventory", {})
         user_dishes = user_data.get("dishes", {})
@@ -703,86 +703,79 @@ class CookingView(discord.ui.View):
         if interaction.user.id != self.author.id:
             return
         self.selected_appliance = interaction.data["values"][0]
-        await interaction.response.send_message(
-            f"調理器具を **{self.selected_appliance}** にセットしました！",
-            ephemeral=True,
-        )
+        # 選択状態だけ受け取り、余計なメッセージを出さないようにする
+        await interaction.response.defer()
 
     async def on_fish_select(self, interaction: discord.Interaction):
         if interaction.user.id != self.author.id:
             return
         self.selected_fishes = interaction.data["values"]
-        await interaction.response.send_message(
-            f"材料に **{', '.join(self.selected_fishes)}** を選びました！",
-            ephemeral=True,
-        )
+        # 選択状態だけ受け取り、余計なメッセージを出さないようにする
+        await interaction.response.defer()
 
     @discord.ui.button(
-        label="🔥 調理スタート！",
-        style=discord.ButtonStyle.success,
-        row=2,
+        label="🔥 調理スタート！", style=discord.ButtonStyle.success, row=2
     )
     async def start_cooking(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
         if interaction.user.id != self.author.id:
+            await interaction.response.send_message(
+                "他の人の操作はできません！", ephemeral=True
+            )
             return
 
+        # 1. 材料が何も選ばれていない場合
         if not self.selected_fishes:
             await interaction.response.send_message(
-                "材料（魚または料理）を1つ以上選択してください！",
+                "❌ 材料が選択されていません！ドロップダウンから材料を選んでください。",
                 ephemeral=True,
             )
             return
 
+        # 最新のユーザーデータを取得
         users_data = load_user_data()
         user_id = str(self.author.id)
         user = users_data.get(user_id, {})
         inventory = user.get("inventory", {})
+        veggies = user.get("veggies", {})
         dishes = user.get("dishes", {})
 
-        # 1. 在庫チェック
+        # 2. 在庫チェック
         for item in self.selected_fishes:
-            fish_count = inventory.get(item, {}).get("count", 0)
-            dish_count = dishes.get(item, 0)
-
-            if fish_count <= 0 and dish_count <= 0:
-                await interaction.response.send_message(
-                    f"**{item}** の在庫が足りません！", ephemeral=True
-                )
-                return
-
-        # 2. 消費処理
-        for item in self.selected_fishes:
-            fish_count = len(inventory.get(item, {}).get("sizes", []))
-            veggie_count = user.get("veggies", {}).get(item, 0)
+            fish_sizes = inventory.get(item, {}).get("sizes", [])
+            fish_count = len(fish_sizes)
+            veggie_count = veggies.get(item, 0)
             dish_count = dishes.get(item, 0)
 
             if fish_count <= 0 and veggie_count <= 0 and dish_count <= 0:
                 await interaction.response.send_message(
-                    f"**{item}** の在庫が足りません！", ephemeral=True
+                    f"❌ **{item}** の在庫が足りません！", ephemeral=True
                 )
                 return
 
-        # 消費処理（魚 ➔ 野菜 ➔ 料理の順で減らす）
+        # 3. 消費処理
         for item in self.selected_fishes:
-            if len(inventory.get(item, {}).get("sizes", [])) > 0:
-                inventory[item]["sizes"].pop(0)  # 一番古い魚から消費
-            elif user.get("veggies", {}).get(item, 0) > 0:
-                user["veggies"][item] -= 1
+            fish_sizes = inventory.get(item, {}).get("sizes", [])
+
+            if len(fish_sizes) > 0:
+                fish_sizes.pop(0)
+            elif veggies.get(item, 0) > 0:
+                veggies[item] -= 1
             elif dishes.get(item, 0) > 0:
                 dishes[item] -= 1
 
         save_user_data(users_data)
 
-        # 3. レシピ判定
+        # ⚠️ ここにあった send_message を削除しました！
+
+        # 4. レシピ判定＆画面呼び出し
         sorted_fishes = sorted(self.selected_fishes)
-        recipe_key = (
-            f"{self.selected_appliance}_" + "_".join(sorted_fishes)
-        )
+        recipe_key = f"{self.selected_appliance}_" + "_".join(sorted_fishes)
         recipes = load_recipes()
 
         if recipe_key in recipes and len(recipes[recipe_key]) > 0:
+            # 既存レシピがある場合はメッセージ送信（SelectRecipeView付き）
             select_view = SelectRecipeView(
                 author=self.author,
                 recipe_key=recipe_key,
@@ -791,11 +784,14 @@ class CookingView(discord.ui.View):
                 selected_fishes=self.selected_fishes,
             )
             await interaction.response.send_message(
+                f"🍳 **{', '.join(self.selected_fishes)}** で調理開始！\n"
                 "💡 この組み合わせのレシピがすでに存在します！\n"
                 "既存の料理を作るか、新しく料理名を考案するか選んでください！",
                 view=select_view,
+                ephemeral=True,
             )
         else:
+            # 新レシピの場合はモーダルを表示（これが最初の応答になるのでエラーになりません！）
             modal = NameDishModal(
                 recipe_key=recipe_key,
                 appliance=self.selected_appliance,
@@ -803,7 +799,6 @@ class CookingView(discord.ui.View):
                 user=self.author,
             )
             await interaction.response.send_modal(modal)
-
 # --------------------------------------------------
 # 🐟 40cm以下の場合のキープ / リリース選択画面
 # --------------------------------------------------
@@ -869,6 +864,22 @@ class CatchOrReleaseView(discord.ui.View):
         msg = f"🌊 **{self.fish_name}（{self.size}cm）** を海に逃がしてあげた！「大きくなって戻ってこいよ〜！」"
         self.stop()
         await interaction.response.edit_message(content=msg, view=None)
+
+class IngredientSelect(discord.ui.Select):
+
+    def __init__(self, options):
+        super().__init__(
+            placeholder="使う材料を選んでください（複数選択可）",
+            min_values=1,
+            max_values=len(options) if options else 1,
+            options=options,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        # ユーザーが選択した item（value）のリストを View 側に保存する！
+        self.view.selected_fishes = self.values
+        # 画面が止まらないように応答（更新なし）
+        await interaction.response.defer()
 
 # --------------------------------------------------
 # 💰 魚・料理の売却画面（View）
