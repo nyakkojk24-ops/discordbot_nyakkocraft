@@ -56,76 +56,6 @@ def save_user_data(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-# 🎣 釣りロジック（閉じるボタン付き）
-async def do_fish_logic_edit(
-    interaction: discord.Interaction, view: discord.ui.View
-):
-    json_path = os.path.join(base_dir, "jsonall", "fishes.json")
-    with open(json_path, "r", encoding="utf-8") as f:
-        all_fishes = json.load(f)
-
-    chosen_name = random.choice(list(all_fishes.keys()))
-    fish_data = all_fishes[chosen_name]
-    size = random.randint(fish_data["min_size"], fish_data["max_size"])
-
-    comment = "コメントが見つかりませんでした"
-    for item in fish_data["comments"]:
-        if item["min"] <= size <= item["max"]:
-            comment = item["text"]
-            break
-
-    user_id = str(interaction.user.id)
-    users_data = load_user_data()
-
-    if user_id not in users_data:
-        users_data[user_id] = {
-            "name": interaction.user.name,
-            "coins": 100,
-            "inventory": {},
-            "veggies": {},
-            "dishes": {},
-        }
-
-    inventory = users_data[user_id]["inventory"]
-    current_max = inventory.get(chosen_name, {}).get("max_size", 0)
-    is_new_record = size > current_max
-
-    # 40cm以下はキープ/リリース選択（※これ自体に閉じるボタンも含められます）
-    if size <= 40:
-        catch_view = CatchOrReleaseView(
-            author=interaction.user,
-            fish_name=chosen_name,
-            size=size,
-            comment=comment,
-            is_new_record=is_new_record,
-            users_data=users_data,
-        )
-        await interaction.response.edit_message(
-            content=f"🎣 **{chosen_name}（{size}cm）** が釣れた！\n{comment}\n⚠️ **40cm以下の小魚です！どうする？**",
-            embed=None,
-            view=catch_view,
-        )
-    else:
-        if chosen_name not in inventory:
-            inventory[chosen_name] = {"sizes": [], "max_size": 0}
-        if "sizes" not in inventory[chosen_name]:
-            inventory[chosen_name]["sizes"] = []
-
-        inventory[chosen_name]["sizes"].append(size)
-        if is_new_record:
-            inventory[chosen_name]["max_size"] = size
-
-        save_user_data(users_data)
-        count = len(inventory[chosen_name]["sizes"])
-        record_text = " 👑 **自己ベスト更新！**" if is_new_record else ""
-
-        # 🌟 単発の釣りコマンド（!fishなど）や画面更新時に「DeleteMessageView」を使う場合
-        # メインメニュー上書きの場合は元の view (MainMenuView) に「閉じるボタン」があるのでそのままでOK！
-        await interaction.response.edit_message(
-            content=f"🎣 **{chosen_name}（{size}cm）** を釣り上げた！{record_text}\n{comment}\n📦（所持数: {count}匹 / 最大記録: {inventory[chosen_name]['max_size']}cm）",
-            embed=None,
-            view=view,
-        )
 
 
 # 🥗 収穫処理の共通ロジック
@@ -160,10 +90,49 @@ async def do_farm_logic(interaction: discord.Interaction):
         f"🥗 **{chosen_veggie}** を収穫した！\n💬 {veggie_info.get('description', '')}\n📦（所持数: {user['veggies'][chosen_veggie]}個）"
     )
 
-# 🎣 メッセージ上書き版の釣りロジック
+# --------------------------------------------------
+# 🎣 耐久値対応版：釣りロジック
+# --------------------------------------------------
 async def do_fish_logic_edit(
     interaction: discord.Interaction, view: discord.ui.View
 ):
+    user_id = str(interaction.user.id)
+    users_data = load_user_data()
+
+    if user_id not in users_data:
+        users_data[user_id] = {
+            "name": interaction.user.name,
+            "coins": 100,
+            "inventory": {},
+            "veggies": {},
+            "dishes": {},
+            "durability": {"fishing_rod": 10, "hoe": 10},  # 初期耐久値（10回）
+        }
+
+    user = users_data[user_id]
+    # 耐久値データがない既存ユーザー向けの互換処理
+    if "durability" not in user:
+        user["durability"] = {"fishing_rod": 10, "hoe": 10}
+
+    # 🪓 耐久値チェック
+    rod_durability = user["durability"].get("fishing_rod", 0)
+    if rod_durability <= 0:
+        await interaction.response.edit_message(
+            content=(
+                "💥 **釣竿が壊れています！**\n"
+                "ショップや修理コマンドで新しい釣竿を手に入れてね！\n\n"
+                "👇 **メニューに戻る**"
+            ),
+            embed=None,
+            view=view,
+        )
+        return
+
+    # 耐久値を 1 減らす
+    user["durability"]["fishing_rod"] -= 1
+    current_rod = user["durability"]["fishing_rod"]
+
+    # --- 🐟 以下、既存の釣り判定処理 ---
     json_path = os.path.join(base_dir, "jsonall", "fishes.json")
     with open(json_path, "r", encoding="utf-8") as f:
         all_fishes = json.load(f)
@@ -178,23 +147,13 @@ async def do_fish_logic_edit(
             comment = item["text"]
             break
 
-    user_id = str(interaction.user.id)
-    users_data = load_user_data()
-
-    if user_id not in users_data:
-        users_data[user_id] = {
-            "name": interaction.user.name,
-            "coins": 100,
-            "inventory": {},
-            "veggies": {},
-            "dishes": {},
-        }
-
-    inventory = users_data[user_id]["inventory"]
+    inventory = user["inventory"]
     current_max = inventory.get(chosen_name, {}).get("max_size", 0)
     is_new_record = size > current_max
 
-    # 40cm以下はキープ/リリース選択（※これ専用のボタンViewに切り替える）
+    # 壊れた瞬間の警告テキスト
+    broke_text = "\n⚠️ **釣竿が壊れてしまった！**" if current_rod == 0 else ""
+
     if size <= 40:
         catch_view = CatchOrReleaseView(
             author=interaction.user,
@@ -205,7 +164,12 @@ async def do_fish_logic_edit(
             users_data=users_data,
         )
         await interaction.response.edit_message(
-            content=f"🎣 **{chosen_name}（{size}cm）** が釣れた！\n{comment}\n⚠️ **40cm以下の小魚です！どうする？**",
+            content=(
+                f"🎣 **{chosen_name}（{size}cm）** が釣れた！\n"
+                f"{comment}\n"
+                f"🛠️ (釣竿残り耐久: {current_rod}){broke_text}\n"
+                f"⚠️ **40cm以下の小魚です！どうする？**"
+            ),
             embed=None,
             view=catch_view,
         )
@@ -223,25 +187,25 @@ async def do_fish_logic_edit(
         count = len(inventory[chosen_name]["sizes"])
         record_text = " 👑 **自己ベスト更新！**" if is_new_record else ""
 
-        # 元のメインメニューボタン（view）を残したまま、メッセージだけ上書き更新！
         await interaction.response.edit_message(
-            content=f"🎣 **{chosen_name}（{size}cm）** を釣り上げた！{record_text}\n{comment}\n📦（所持数: {count}匹 / 最大記録: {inventory[chosen_name]['max_size']}cm）\n\n👇 **続けて遊ぶ場合はボタンを押してね！**",
+            content=(
+                f"🎣 **{chosen_name}（{size}cm）** を釣り上げた！{record_text}\n"
+                f"{comment}\n"
+                f"📦（所持数: {count}匹 / 最大記録: {inventory[chosen_name]['max_size']}cm）\n"
+                f"🛠️ **釣竿残り耐久:** `{current_rod}/10`{broke_text}\n\n"
+                f"👇 **続けて遊ぶ場合はボタンを押してね！**"
+            ),
             embed=None,
             view=view,
         )
 
 
-# 🥗 メッセージ上書き版の収穫ロジック
+# --------------------------------------------------
+# 🥗 耐久値対応版：野菜収穫ロジック
+# --------------------------------------------------
 async def do_farm_logic_edit(
     interaction: discord.Interaction, view: discord.ui.View
 ):
-    json_path = os.path.join(base_dir, "jsonall", "veggies.json")
-    with open(json_path, "r", encoding="utf-8") as f:
-        all_veggies = json.load(f)
-
-    chosen_veggie = random.choice(list(all_veggies.keys()))
-    veggie_info = all_veggies[chosen_veggie]
-
     user_id = str(interaction.user.id)
     users_data = load_user_data()
 
@@ -252,21 +216,58 @@ async def do_farm_logic_edit(
             "inventory": {},
             "veggies": {},
             "dishes": {},
+            "durability": {"fishing_rod": 10, "hoe": 10},
         }
 
     user = users_data[user_id]
+    if "durability" not in user:
+        user["durability"] = {"fishing_rod": 10, "hoe": 10}
+
+    # 🪓 クワの耐久値チェック
+    hoe_durability = user["durability"].get("hoe", 0)
+    if hoe_durability <= 0:
+        await interaction.response.edit_message(
+            content=(
+                "💥 **農具（クワ）が壊れています！**\n"
+                "新しいクワを用意してね！\n\n"
+                "👇 **メニューに戻る**"
+            ),
+            embed=None,
+            view=view,
+        )
+        return
+
+    # 耐久値を 1 減らす
+    user["durability"]["hoe"] -= 1
+    current_hoe = user["durability"]["hoe"]
+
+    # 野菜の抽選
+    json_path = os.path.join(base_dir, "jsonall", "veggies.json")
+    with open(json_path, "r", encoding="utf-8") as f:
+        all_veggies = json.load(f)
+
+    chosen_veggie = random.choice(list(all_veggies.keys()))
+    veggie_info = all_veggies[chosen_veggie]
+
     if "veggies" not in user:
         user["veggies"] = {}
 
     user["veggies"][chosen_veggie] = user["veggies"].get(chosen_veggie, 0) + 1
     save_user_data(users_data)
 
+    broke_text = "\n⚠️ **クワが壊れてしまった！**" if current_hoe == 0 else ""
+
     await interaction.response.edit_message(
-        content=f"🥗 **{chosen_veggie}** を収穫した！\n💬 {veggie_info.get('description', '')}\n📦（所持数: {user['veggies'][chosen_veggie]}個）\n\n👇 **続けて遊ぶ場合はボタンを押してね！**",
+        content=(
+            f"🥗 **{chosen_veggie}** を収穫した！\n"
+            f"💬 {veggie_info.get('description', '')}\n"
+            f"📦（所持数: {user['veggies'][chosen_veggie]}個）\n"
+            f"🛠️ **クワ残り耐久:** `{current_hoe}/10`{broke_text}\n\n"
+            f"👇 **続けて遊ぶ場合はボタンを押してね！**"
+        ),
         embed=None,
         view=view,
     )
-
 
 # --------------------------------------------------
 # 🖼️ UIクラス群（Modal & View）
@@ -876,86 +877,286 @@ class CatchOrReleaseView(discord.ui.View):
             view=main_view,  # メインメニューのボタンに戻す
         )
 # --------------------------------------------------
-# 💰 魚・料理の売却画面（View）
+# 🛒 市場・ショップ View（道具修理 ＆ 2種類の売却対応）
 # --------------------------------------------------
-class SellView(discord.ui.View):
+class ShopView(discord.ui.View):
 
-    def __init__(self, author, user_data, all_fishes):
-        super().__init__(timeout=60)
+    def __init__(self, author, user_data):
+        super().__init__(timeout=180)
         self.author = author
         self.user_data = user_data
-        self.all_fishes = all_fishes
+
+    # --------------------------------------------------
+    # 🛠️ 道具の修理セクション
+    # --------------------------------------------------
+    @discord.ui.button(
+        label="🎣 釣竿を修理 (100 NP)",
+        style=discord.ButtonStyle.primary,
+        row=0,
+    )
+    async def buy_rod(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        users_data = load_user_data()
+        user = users_data.get(str(self.author.id), {})
+        coins = user.get("coins", 0)
+
+        if coins < 100:
+            await interaction.response.send_message(
+                "❌ **NPが足りません！**（必要: 100 NP）", ephemeral=True
+            )
+            return
+
+        user["coins"] -= 100
+        if "durability" not in user:
+            user["durability"] = {}
+        user["durability"]["fishing_rod"] = 10  # 耐久を10に回復
+
+        save_user_data(users_data)
+        await interaction.response.send_message(
+            f"✨ **釣竿を修理しました！** (耐久: 10/10)\n💰 残高: **{user['coins']} NP**",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="🪓 クワを修理 (100 NP)",
+        style=discord.ButtonStyle.primary,
+        row=0,
+    )
+    async def buy_hoe(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        users_data = load_user_data()
+        user = users_data.get(str(self.author.id), {})
+        coins = user.get("coins", 0)
+
+        if coins < 100:
+            await interaction.response.send_message(
+                "❌ **NPが足りません！**（必要: 100 NP）", ephemeral=True
+            )
+            return
+
+        user["coins"] -= 100
+        if "durability" not in user:
+            user["durability"] = {}
+        user["durability"]["hoe"] = 10  # 耐久を10に回復
+
+        save_user_data(users_data)
+        await interaction.response.send_message(
+            f"✨ **クワを修理しました！** (耐久: 10/10)\n💰 残高: **{user['coins']} NP**",
+            ephemeral=True,
+        )
+
+    # --------------------------------------------------
+    # 💰 売却セクション
+    # --------------------------------------------------
+
+    # ① ⚡ 一括売却（魚・野菜を一気にお金にする）
+    @discord.ui.button(
+        label="⚡ 魚・野菜を一括売却",
+        style=discord.ButtonStyle.danger,
+        row=1,
+    )
+    async def sell_all(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        users_data = load_user_data()
+        user = users_data.get(str(self.author.id), {})
+        inventory = user.get("inventory", {})
+        veggies = user.get("veggies", {})
+
+        total_earned = 0
+        sold_fishes_count = 0
+        sold_veggies_count = 0
+
+        # 魚の単価マスターを読み込み（基本10NP〜サイズ加算など）
+        json_path_fish = os.path.join(base_dir, "jsonall", "fishes.json")
+        json_path_veg = os.path.join(base_dir, "jsonall", "veggies.json")
+
+        all_fishes = {}
+        all_veggies = {}
+        if os.path.exists(json_path_fish):
+            with open(json_path_fish, "r", encoding="utf-8") as f:
+                all_fishes = json.load(f)
+        if os.path.exists(json_path_veg):
+            with open(json_path_veg, "r", encoding="utf-8") as f:
+                all_veggies = json.load(f)
+
+        # 1. 魚をすべて計算＆売却
+        for fish_name, fish_info in list(inventory.items()):
+            sizes = fish_info.get("sizes", [])
+            base_price = all_fishes.get(fish_name, {}).get("price", 15)
+
+            for s in sizes:
+                # サイズ(cm) × 0.5 のサイズボーナスをのせる
+                earned = base_price + int(s * 0.5)
+                total_earned += earned
+                sold_fishes_count += 1
+
+            # サイズリストを空にして所持数を0にする
+            fish_info["sizes"] = []
+
+        # 2. 野菜をすべて計算＆売却
+        for veg_name, count in list(veggies.items()):
+            if count > 0:
+                base_price = all_veggies.get(veg_name, {}).get("price", 10)
+                total_earned += base_price * count
+                sold_veggies_count += count
+                veggies[veg_name] = 0
+
+        if total_earned == 0:
+            await interaction.response.send_message(
+                "📦 売却できる魚や野菜を持っていません！", ephemeral=True
+            )
+            return
+
+        user["coins"] = user.get("coins", 0) + total_earned
+        save_user_data(users_data)
+
+        await interaction.response.send_message(
+            f"💰 **一括出荷が完了しました！**\n"
+            f"🐟 魚: **{sold_fishes_count}匹** / 🥗 野菜: **{sold_veggies_count}個**\n"
+            f"💵 売却額: **+{total_earned} NP** (所持金: **{user['coins']} NP**)",
+            ephemeral=True,
+        )
+
+    # ② 🎯 選択して個別売却（ドロップダウンを開く）
+    @discord.ui.button(
+        label="🎯 選択して個別売却",
+        style=discord.ButtonStyle.success,
+        row=1,
+    )
+    async def open_select_sell(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        users_data = load_user_data()
+        user = users_data.get(str(self.author.id), {})
+
+        # 個別売却用ドロップダウンViewを表示
+        sell_select_view = IndividualSellView(
+            author=self.author, user_data=user
+        )
+        if not sell_select_view.has_items:
+            await interaction.response.send_message(
+                "📦 売却できる素材がありません！", ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            "🏧 **売却したい素材（1個ずつ/1匹ずつ）を選択してください：**",
+            view=sell_select_view,
+            ephemeral=True,
+        )
+
+    # ③ ❌ 閉じるボタン
+    @discord.ui.button(
+        label="❌ 閉じる", style=discord.ButtonStyle.secondary, row=2
+    )
+    async def btn_close(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await interaction.message.delete()
+
+
+# --------------------------------------------------
+# 🎯 個別売却用 Dropdown View
+# --------------------------------------------------
+class IndividualSellView(discord.ui.View):
+
+    def __init__(self, author, user_data):
+        super().__init__(timeout=60)
+        self.author = author
+        self.has_items = False
 
         inventory = user_data.get("inventory", {})
+        veggies = user_data.get("veggies", {})
+        dishes = user_data.get("dishes", {})
+
         options = []
 
-        # 魚を売却選択肢に追加（サイズに応じて価格計算！）
-        for fish_name, data in inventory.items():
-            count = data.get("count", 0)
-            if count > 0 and fish_name in all_fishes:
-                fish_master = all_fishes[fish_name]
-                max_size = data.get("max_size", fish_master["min_size"])
-
-                # 価格計算ロジック
-                base_price = fish_master.get("base_price", 100)  # デフォルト100NP
-                min_size = fish_master["min_size"]
-                # 10cmごとに+20NP追加
-                extra_price = int((max_size - min_size) / 10) * 20
-                unit_price = base_price + extra_price
-
+        # 魚の選択肢（先頭1匹のサイズを表示）
+        for name, info in inventory.items():
+            sizes = info.get("sizes", [])
+            if len(sizes) > 0:
                 options.append(
                     discord.SelectOption(
-                        label=f"🐟 {fish_name} (所持: {count}匹)",
-                        value=fish_name,
-                        description=f"最高記録 {max_size}cm 基準 ➔ 1匹 {unit_price} NP で売却",
+                        label=f"🐟 {name} (1匹売却 / {sizes[0]}cm)",
+                        value=f"fish_{name}",
+                    )
+                )
+
+        # 野菜の選択肢
+        for name, count in veggies.items():
+            if count > 0:
+                options.append(
+                    discord.SelectOption(
+                        label=f"🥗 {name} (1個売却 / 所持: {count}個)",
+                        value=f"veg_{name}",
+                    )
+                )
+
+        # 料理の選択肢（料理も高値で売れる！）
+        for name, count in dishes.items():
+            if count > 0:
+                options.append(
+                    discord.SelectOption(
+                        label=f"🍳 {name} (1個売却 / 所持: {count}個)",
+                        value=f"dish_{name}",
                     )
                 )
 
         if options:
+            self.has_items = True
             select = discord.ui.Select(
-                placeholder="💰 売却したい魚を選んでください（1匹ずつ売却）",
-                options=options[:25],
+                placeholder="売却するアイテムを1つ選んでください",
+                options=options[:25],  # Discord制限(最大25個)
             )
             select.callback = self.on_select_sell
             self.add_item(select)
 
     async def on_select_sell(self, interaction: discord.Interaction):
-        if interaction.user.id != self.author.id:
-            return
-
-        chosen_fish = interaction.data["values"][0]
+        selected_value = interaction.data["values"][0]
 
         users_data = load_user_data()
-        user_id = str(self.author.id)
-        user = users_data.get(user_id, {})
-        inventory = user.get("inventory", {})
+        user = users_data.get(str(self.author.id), {})
 
-        if inventory.get(chosen_fish, {}).get("count", 0) <= 0:
+        earned = 0
+        item_name = ""
+
+        # 魚の売却
+        if selected_value.startswith("fish_"):
+            item_name = selected_value.replace("fish_", "")
+            sizes = user.get("inventory", {}).get(item_name, {}).get("sizes", [])
+            if sizes:
+                s = sizes.pop(0)  # 1匹消費
+                earned = 15 + int(s * 0.5)
+
+        # 野菜の売却
+        elif selected_value.startswith("veg_"):
+            item_name = selected_value.replace("veg_", "")
+            if user.get("veggies", {}).get(item_name, 0) > 0:
+                user["veggies"][item_name] -= 1
+                earned = 10
+
+        # 料理の売却
+        elif selected_value.startswith("dish_"):
+            item_name = selected_value.replace("dish_", "")
+            if user.get("dishes", {}).get(item_name, 0) > 0:
+                user["dishes"][item_name] -= 1
+                earned = 50  # 料理は高価！
+
+        if earned > 0:
+            user["coins"] = user.get("coins", 0) + earned
+            save_user_data(users_data)
             await interaction.response.send_message(
-                "その魚はもう持っていません！", ephemeral=True
+                f"💵 **{item_name}** を売却しました！\n"
+                f"売却額: **+{earned} NP** (所持金: **{user['coins']} NP**)",
+                ephemeral=True,
             )
-            return
-
-        # 売却価格の再計算
-        fish_master = self.all_fishes[chosen_fish]
-        max_size = inventory[chosen_fish].get(
-            "max_size", fish_master["min_size"]
-        )
-        base_price = fish_master.get("base_price", 100)
-        min_size = fish_master["min_size"]
-        extra_price = int((max_size - min_size) / 10) * 20
-        unit_price = base_price + extra_price
-
-        # 在庫を1減らし、NPを付与
-        inventory[chosen_fish]["count"] -= 1
-        user["coins"] = user.get("coins", 0) + unit_price
-
-        save_user_data(users_data)
-
-        await interaction.response.send_message(
-            f"💸 **{chosen_fish}（最大{max_size}cm記録）** を1匹売却しました！\n"
-            f"💰 **+{unit_price} NP** を獲得！（現在の所持金: **{user['coins']} NP**）"
-        ) 
+        else:
+            await interaction.response.send_message(
+                "❌ 在庫がありません！", ephemeral=True
+            )
 
 # --------------------------------------------------
 # 🎮 メインメニュー View（上書き ＆ 閉じるボタン付き）
@@ -1029,29 +1230,24 @@ class MainMenuView(discord.ui.View):
         )
 
     @discord.ui.button(
-        label="💰 魚を売る", style=discord.ButtonStyle.success, row=1
+        label="💰 市場・ショップ", style=discord.ButtonStyle.success, row=1
     )
     async def btn_sell(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        user_id = str(self.author.id)
         users_data = load_user_data()
-        user_data = users_data.get(user_id, {})
+        user_data = users_data.get(str(self.author.id), {})
 
-        json_path = os.path.join(base_dir, "jsonall", "fishes.json")
-        with open(json_path, "r", encoding="utf-8") as f:
-            all_fishes = json.load(f)
-
+        view = ShopView(author=self.author, user_data=user_data)
         coins = user_data.get("coins", 0)
-        view = SellView(
-            author=self.author, user_data=user_data, all_fishes=all_fishes
-        )
+
         await interaction.response.send_message(
-            f"🏧 **フィッシュマーケット**（所持金: **{coins} NP**）\n売却したい魚を選んでね！",
+            f"🏧 **にゃっこクラフト中央市場**\n"
+            f"💰 あなたの所持金: **{coins} NP**\n\n"
+            f"道具の修理や、手に入れた素材の出荷ができます！",
             view=view,
             ephemeral=True,
         )
-
     @discord.ui.button(
         label="📖 料理図鑑", style=discord.ButtonStyle.secondary, row=1
     )
