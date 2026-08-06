@@ -658,248 +658,251 @@ def build_inventory_text(author, user_data):
     msg += "───────────────────"
     return msg
 
-# ② 新料理の命名モーダル
-class NameDishModal(discord.ui.Modal, title="🎉 新料理の命名！"):
+# ==================================================
+# 🗑️ メッセージ削除ボタン用View
+# ==================================================
+class DeleteView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="閉じる", style=discord.ButtonStyle.secondary, emoji="🗑️"
+    )
+    async def delete_message(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await interaction.message.delete()
+
+# ==================================================
+# 📝 料理名入力用モーダル
+# ==================================================
+class DishNameModal(discord.ui.Modal, title="🍳 料理の名前を決めよう！"):
     dish_name_input = discord.ui.TextInput(
-        label="料理名を入力してください",
-        placeholder="例：マグロの特製スムージー",
+        label="料理の名前",
+        placeholder="例: 焦がしねぎのグリル / 奇跡のねぎグラタン",
         max_length=30,
         required=True,
     )
 
-    def __init__(self, recipe_key, appliance, selected_fishes, user):
+    def __init__(self, view_instance):
         super().__init__()
-        self.recipe_key = recipe_key
-        self.appliance = appliance
-        self.selected_fishes = selected_fishes
-        self.user = user
+        self.view_instance = view_instance
 
     async def on_submit(self, interaction: discord.Interaction):
-        dish_name = self.dish_name_input.value.strip()
+        user_dish_name = self.dish_name_input.value
 
-        recipes = load_recipes()
-        if self.recipe_key not in recipes:
-            recipes[self.recipe_key] = []
-
-        new_dish = {
-            "name": dish_name,
-            "appliance": self.appliance,
-            "ingredients": self.selected_fishes,
-            "author": self.user.name,
-        }
-        recipes[self.recipe_key].append(new_dish)
-        save_recipes(recipes)
-
-        users_data = load_user_data()
-        user_id = str(self.user.id)
-        if "dishes" not in users_data[user_id]:
-            users_data[user_id]["dishes"] = {}
-
-        dishes = users_data[user_id]["dishes"]
-        dishes[dish_name] = dishes.get(dish_name, 0) + 1
-        save_user_data(users_data)
-
-        await interaction.response.send_message(
-            f"✨ **新レシピ『{dish_name}』を登録・作成しました！** 🎉\n"
-            f"考案者: **{self.user.display_name}**\n"
-            f"（調理器具: {self.appliance} / 材料: {', '.join(self.selected_fishes)}）"
-        )
-
-
-# ③ 既存レシピがある場合の選択画面
-class SelectRecipeView(discord.ui.View):
-
-    def __init__(
-        self, author, recipe_key, existing_list, appliance, selected_fishes
-    ):
-        super().__init__(timeout=60)
-        self.author = author
-        self.recipe_key = recipe_key
-        self.existing_list = existing_list
-        self.appliance = appliance
-        self.selected_fishes = selected_fishes
-
-        options = [
-            discord.SelectOption(
-                label=dish["name"], description=f"考案者: {dish['author']}"
+        selected_fishes = getattr(self.view_instance, "selected_fishes", [])
+        if not selected_fishes:
+            await interaction.response.send_message(
+                "❌ 素材が選ばれていません！", ephemeral=True
             )
-            for dish in existing_list
-        ]
-
-        select = discord.ui.Select(
-            placeholder="📜 既存のレシピから選んで作る", options=options
-        )
-        select.callback = self.on_select_existing
-        self.add_item(select)
-
-    async def on_select_existing(self, interaction: discord.Interaction):
-        if interaction.user.id != self.author.id:
             return
 
-        chosen_name = interaction.data["values"][0]
+        main_item = selected_fishes[0]
+        extra_item = selected_fishes[1] if len(selected_fishes) > 1 else None
+        tool_used = getattr(self.view_instance, "selected_appliance", "ミキサー")
+
+        # ★評価と価格倍率の計算
+        main_item_data = {"name": main_item}
+        recipe_data = {"best_tool": tool_used}
+
+        final_stars, multiplier = (
+            self.view_instance.calculate_dish_quality(
+                main_item_data, extra_item, tool_used, recipe_data
+            )
+        )
 
         users_data = load_user_data()
-        user_id = str(self.author.id)
-        if "dishes" not in users_data[user_id]:
-            users_data[user_id]["dishes"] = {}
+        user_id = str(interaction.user.id)
 
-        dishes = users_data[user_id]["dishes"]
-        dishes[chosen_name] = dishes.get(chosen_name, 0) + 1
+        if user_id not in users_data:
+            users_data[user_id] = {}
+        if "inventory" not in users_data[user_id]:
+            users_data[user_id]["inventory"] = {}
+
+        # 🥩 素材の消費処理
+        for item in selected_fishes:
+            if item in users_data[user_id].get("inventory", {}):
+                sizes = users_data[user_id]["inventory"][item].get("sizes", [])
+                if sizes:
+                    sizes.pop(0)
+            elif item in users_data[user_id].get("veggies", {}):
+                if users_data[user_id]["veggies"][item] > 0:
+                    users_data[user_id]["veggies"][item] -= 1
+            elif item in users_data[user_id].get("seafood", {}):
+                if users_data[user_id]["seafood"][item] > 0:
+                    users_data[user_id]["seafood"][item] -= 1
+            elif item in users_data[user_id].get("meats", {}):
+                if users_data[user_id]["meats"][item] > 0:
+                    users_data[user_id]["meats"][item] -= 1
+            elif item in users_data[user_id].get("seasonings", {}):
+                if users_data[user_id]["seasonings"][item] > 0:
+                    users_data[user_id]["seasonings"][item] -= 1
+            elif item in users_data[user_id].get("dishes", {}):
+                if users_data[user_id]["dishes"][item] > 0:
+                    users_data[user_id]["dishes"][item] -= 1
+
+        # 価格計算とユーザーが入力した名前で保存！
+        base_price = 100
+        final_price = int(base_price * multiplier)
+        dish_key = f"【★{final_stars}】{user_dish_name}"
+
+        current_item = users_data[user_id]["inventory"].get(
+            dish_key, {"count": 0, "price": final_price, "stars": final_stars}
+        )
+        current_count = current_item.get("count", 0)
+
+        users_data[user_id]["inventory"][dish_key] = {
+            "count": current_count + 1,
+            "price": final_price,
+            "stars": final_stars,
+        }
+
         save_user_data(users_data)
 
-        await interaction.response.send_message(
-            f"🍳 **{self.appliance}** で調理完了！\n"
-            f"✨ **『{chosen_name}』** が出来上がりました！"
+        # 結果表示Embed
+        star_display = "⭐" * final_stars
+        star_medals = {1: "🥉", 2: "🥉", 3: "🥈", 4: "🥇", 5: "👑 ✨"}
+
+        embed = discord.Embed(
+            title=f"{star_medals[final_stars]} 【{star_display}】{user_dish_name} が完成！",
+            color=(
+                discord.Color.gold()
+                if final_stars == 5
+                else discord.Color.green()
+            ),
+        )
+        embed.add_field(
+            name="🍳 調理内容",
+            value=f"**メイン:** {main_item}\n**隠し味:** {extra_item if extra_item else 'なし'}\n**器具:** {tool_used}",
+            inline=False,
+        )
+        embed.add_field(
+            name="💰 評価 & 価値",
+            value=f"価値: **{final_price:,} NP** ({multiplier}倍ボーナス！)",
+            inline=False,
         )
 
-    @discord.ui.button(
-        label="✨ 新しい料理名を考案して作る！",
-        style=discord.ButtonStyle.success,
-        row=1,
-    )
-    async def create_new_recipe(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        if interaction.user.id != self.author.id:
-            return
+        # 🌟 元の選択パネル（メッセージ）を自動で削除！
+        if interaction.message:
+            await interaction.message.delete()
 
-        modal = NameDishModal(
-            recipe_key=self.recipe_key,
-            appliance=self.appliance,
-            selected_fishes=self.selected_fishes,
-            user=self.author,
-        )
-        await interaction.response.send_modal(modal)
+        # その後、完成結果のメッセージを送信！
+        await interaction.response.send_message(embed=embed, view=DeleteView())
 
+
+# ==================================================
+# 🍳 CookingView（確定・エラー絶対不発版）
+# ==================================================
 class CookingView(discord.ui.View):
+
+    def calculate_dish_quality(
+        self, main_item_data, extra_item, tool_used, recipe_data
+    ):
+        score = 1
+        if "size" in main_item_data and "max_size" in main_item_data:
+            size_ratio = main_item_data["size"] / main_item_data["max_size"]
+            if size_ratio >= 0.95:
+                score += 2
+            elif size_ratio >= 0.80:
+                score += 1
+
+        good_extra = [
+            "レモン",
+            "ニンニク",
+            "ハチミツ",
+            "唐辛子",
+            "ねぎ",
+            "行者にんにく",
+            "醤油",
+            "マヨネーズ",
+            # 🌟 新しい調味料も追加！
+            "味噌",
+            "ケチャップ",
+            "わさび",
+            "みりん",
+            "ラー油",
+        ]
+        if extra_item in good_extra:
+            score += 1
+
+        best_tool = recipe_data.get("best_tool")
+        if best_tool and tool_used == best_tool:
+            score += 1
+
+        final_stars = min(score, 5)
+        multipliers = {1: 1.0, 2: 1.2, 3: 1.5, 4: 2.0, 5: 3.0}
+        return final_stars, multipliers[final_stars]
 
     def __init__(self, author, user_data):
         super().__init__(timeout=60)
         self.author = author
         self.user_data = user_data
-        self.selected_appliance = "ミキサー"  # 初期値を設定しておく
-        self.selected_fishes = []  # 選ばれた素材リスト（初期値は空）
+        self.selected_appliance = "ミキサー"
+        self.selected_fishes = []
 
         user_inventory = user_data.get("inventory", {})
         user_dishes = user_data.get("dishes", {})
 
-        # 調理器具の選択
         appliance_select = discord.ui.Select(
             placeholder="🍳 調理器具を選んでください（初期値: ミキサー）",
             options=[
-                discord.SelectOption(
-                    label="ミキサー",
-                    description="細かくすりつぶしてペースト状にする",
-                    emoji="🥣",
-                ),
-                discord.SelectOption(
-                    label="フライパン",
-                    description="じっくり焼いて香ばしく仕上げる",
-                    emoji="🍳",
-                ),
-                discord.SelectOption(
-                    label="鍋",
-                    description="煮込んで出汁やスープを取る",
-                    emoji="🍲",
-                ),
-                discord.SelectOption(
-                    label="包丁",
-                    description="切り分けて刺身やタタキにする",
-                    emoji="🔪",
-                ),
-                discord.SelectOption(
-                    label="オーブン",
-                    description="ふっくら・こんがりと焼き上げる",
-                    emoji="🔥",
-                ),
-                discord.SelectOption(
-                    label="蒸し器",
-                    description="蒸気で旨味を閉じ込めてふっくら蒸しあげる",
-                    emoji="💨",
-                ),
-                discord.SelectOption(
-                    label="網焼きグリル",
-                    description="直火で香ばしく焼き目をつける",
-                    emoji="🍖",
-                ),
-                discord.SelectOption(
-                    label="炊飯器",
-                    description="お米と素材の旨味をぎゅっと炊き込む",
-                    emoji="🍚",
-                ),
-                discord.SelectOption(
-                    label="土鍋",
-                    description="香ばしいおこげと出汁をじっくり染み込ませる",
-                    emoji="🍲",
-                ),
+                discord.SelectOption(label="ミキサー", description="細かくすりつぶしてペースト状にする", emoji="🥣"),
+                discord.SelectOption(label="フライパン", description="じっくり焼いて香ばしく仕上げる", emoji="🍳"),
+                discord.SelectOption(label="鍋", description="煮込んで出汁やスープを取る", emoji="🍲"),
+                discord.SelectOption(label="包丁", description="切り分けて刺身やタタキにする", emoji="🔪"),
+                discord.SelectOption(label="オーブン", description="ふっくら・こんがりと焼き上げる", emoji="🔥"),
+                discord.SelectOption(label="蒸し器", description="蒸気で旨味を閉じ込めてふっくら蒸しあげる", emoji="💨"),
+                discord.SelectOption(label="網焼きグリル", description="直火で香ばしく焼き目をつける", emoji="🍖"),
+                discord.SelectOption(label="炊飯器", description="お米と素材の旨味をぎゅっと炊き込む", emoji="🍚"),
+                discord.SelectOption(label="土鍋", description="香ばしいおこげと出汁をじっくり染み込ませる", emoji="🍲"),
+                discord.SelectOption(label="天ぷら鍋", description="カラッと揚げてサクサクの歯ごたえに", emoji="🍤"),
+                discord.SelectOption(label="圧力鍋", description="高圧で短時間で柔らかく煮込む", emoji="💥"),
+                discord.SelectOption(label="燻製器", description="桜チップの燻煙で香ばしい風味を付ける", emoji="🪵"),
+                discord.SelectOption(label="かき氷機", description="素材と氷を削ってキンキンに冷やす", emoji="🍧"),
+                discord.SelectOption(label="中華鍋", description="豪快な強火で一気にパラパラ・シャキシャキに炒める", emoji="🥢"),
+                discord.SelectOption(label="ホットサンドメーカー",description="具材を挟んでカリッと香ばしく焼き上げる",emoji="🥪",),
+                discord.SelectOption(label="たこ焼き器",description="くるくる回して外はカリッと中はトロトロに",emoji="🐙",),
+                discord.SelectOption(label="ピザ窯",description="超高温で一気に焼き上げ生地の旨味を閉じ込める",emoji="🍕",),
+                discord.SelectOption(label="フォンデュ鍋",description="とろ〜りチーズやチョコをたっぷりと絡める",emoji="🫕",),
+                discord.SelectOption(label="低温調理器",description="じっくり絶妙な火加減で極上の柔らかさに仕上げる",emoji="🥩",),
+                discord.SelectOption(label="バーナー",description="表面を炙って香ばしい焦げ目と香りを付ける",emoji="🔥",),
             ],
         )
         appliance_select.callback = self.on_appliance_select
         self.add_item(appliance_select)
 
-        # 素材・料理の混合選択肢を作成
         ingredient_options = []
 
-        # ① 魚を追加
         for name, data in user_inventory.items():
             count = len(data.get("sizes", []))
             if count > 0:
-                ingredient_options.append(
-                    discord.SelectOption(
-                        label=f"🐟 {name} ({count}匹所持)", value=name
-                    )
-                )
+                ingredient_options.append(discord.SelectOption(label=f"🐟 {name} ({count}匹所持)", value=name))
 
-        # ② 野菜を追加
         user_veggies = user_data.get("veggies", {})
         for name, count in user_veggies.items():
             if count > 0:
-                ingredient_options.append(
-                    discord.SelectOption(
-                        label=f"🥗 {name} ({count}個所持)", value=name
-                    )
-                )
+                ingredient_options.append(discord.SelectOption(label=f"🥗 {name} ({count}個所持)", value=name))
 
-        # お肉を追加 🥩
         user_meats = user_data.get("meats", {})
         for name, count in user_meats.items():
             if count > 0:
-                ingredient_options.append(
-                    discord.SelectOption(
-                        label=f"🥩 {name} ({count}個所持)", value=name
-                    )
-                )
+                ingredient_options.append(discord.SelectOption(label=f"🥩 {name} ({count}個所持)", value=name))
 
-        # ③ 調味料を追加
         user_seasonings = user_data.get("seasonings", {})
         for name, count in user_seasonings.items():
             if count > 0:
-                ingredient_options.append(
-                    discord.SelectOption(
-                        label=f"🧂 {name} (所持: {count}個)",
-                        value=name,
-                        description="市場で購入した調味料",
-                    )
-                )
+                ingredient_options.append(discord.SelectOption(label=f"🧂 {name} (所持: {count}個)", value=name))
 
-        # ④ 料理（中間素材）を追加
         for name, count in user_dishes.items():
             if count > 0:
-                ingredient_options.append(
-                    discord.SelectOption(
-                        label=f"🍳 {name} ({count}個所持)", value=name
-                    )
-                )
+                ingredient_options.append(discord.SelectOption(label=f"🍳 {name} ({count}個所持)", value=name))
 
-        # ⑤ 海の幸を追加 🤿
         user_seafood = user_data.get("seafood", {})
         for name, count in user_seafood.items():
             if count > 0:
-                ingredient_options.append(
-                    discord.SelectOption(
-                        label=f"🤿 {name} ({count}個所持)", value=name
-                    )
-                )
+                ingredient_options.append(discord.SelectOption(label=f"🤿 {name} ({count}個所持)", value=name))
 
         if ingredient_options:
             ingredient_select = discord.ui.Select(
@@ -913,15 +916,33 @@ class CookingView(discord.ui.View):
 
     async def on_appliance_select(self, interaction: discord.Interaction):
         if interaction.user.id != self.author.id:
+            await interaction.response.send_message("❌ 他の人の操作はできません！", ephemeral=True)
             return
+
         self.selected_appliance = interaction.data["values"][0]
-        await interaction.response.defer()
+
+        # 選択項目を視覚的に固定
+        for child in self.children:
+            if isinstance(child, discord.ui.Select) and child.placeholder and "器具" in child.placeholder:
+                for option in child.options:
+                    option.default = (option.value == self.selected_appliance)
+
+        # メッセージ編集でレスポンスを消化しておく
+        await interaction.response.edit_message(view=self)
 
     async def on_fish_select(self, interaction: discord.Interaction):
         if interaction.user.id != self.author.id:
+            await interaction.response.send_message("❌ 他の人の操作はできません！", ephemeral=True)
             return
+
         self.selected_fishes = interaction.data["values"]
-        await interaction.response.defer()
+
+        for child in self.children:
+            if isinstance(child, discord.ui.Select) and child.placeholder and "材料" in child.placeholder:
+                for option in child.options:
+                    option.default = (option.value in self.selected_fishes)
+
+        await interaction.response.edit_message(view=self)
 
     @discord.ui.button(
         label="🔥 調理スタート！", style=discord.ButtonStyle.success, row=2
@@ -929,104 +950,20 @@ class CookingView(discord.ui.View):
     async def start_cooking(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        if not self.selected_fishes:
-            await interaction.response.send_message(
-                "❌ 材料が選択されていません！", ephemeral=True
-            )
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message("❌ 他の人の操作はできません！", ephemeral=True)
             return
 
-        # 2. 最新のユーザーデータを取得
-        users_data = load_user_data()
-        user_id = str(self.author.id)
-        user = users_data.get(user_id, {})
+        if not getattr(self, "selected_fishes", None):
+            await interaction.response.send_message("❌ 材料が選択されていません！", ephemeral=True)
+            return
 
-        inventory = user.get("inventory", {})
-        veggies = user.get("veggies", {})
-        dishes = user.get("dishes", {})
-        seasonings = user.get("seasonings", {})
+        if not getattr(self, "selected_appliance", None):
+            await interaction.response.send_message("❌ 調理器具が選択されていません！", ephemeral=True)
+            return
 
-# 在庫チェック
-        meats = user.get("meats", {})
-        seafood = user.get("seafood", {})  # 👈 🌟 追加！
-        for item_name in self.selected_fishes:
-            in_fish = item_name in inventory
-            in_veggie = item_name in veggies
-            in_seasoning = item_name in seasonings
-            in_meat = item_name in meats
-            in_seafood = item_name in seafood  # 👈 🌟 追加！
-            in_dish = item_name in dishes
-
-            if not (
-                in_fish
-                or in_veggie
-                or in_seasoning
-                or in_meat
-                or in_seafood  # 👈 🌟 条件に追加！
-                or in_dish
-            ):
-                await interaction.response.send_message(
-                    f"❌ {item_name} の在庫がありません！",
-                    ephemeral=True,
-                )
-                return
-
-        # 消費処理
-        for item in self.selected_fishes:
-            fish_sizes = inventory.get(item, {}).get("sizes", [])
-
-            if len(fish_sizes) > 0:
-                fish_sizes.pop(0)
-            elif veggies.get(item, 0) > 0:
-                veggies[item] -= 1
-                if veggies[item] <= 0:
-                    del veggies[item]
-            elif seasonings.get(item, 0) > 0:
-                seasonings[item] -= 1
-                if seasonings[item] <= 0:
-                    del seasonings[item]
-            elif meats.get(item, 0) > 0:
-                meats[item] -= 1
-                if meats[item] <= 0:
-                    del meats[item]
-            elif seafood.get(item, 0) > 0:  # 👈 🌟 海の幸の消費処理を追加！
-                seafood[item] -= 1
-                if seafood[item] <= 0:
-                    del seafood[item]
-            elif dishes.get(item, 0) > 0:
-                dishes[item] -= 1
-                if dishes[item] <= 0:
-                    del dishes[item]
-
-        save_user_data(users_data)
-
-        # 5. レシピ判定＆画面呼び出し
-        sorted_fishes = sorted(self.selected_fishes)
-        recipe_key = f"{self.selected_appliance}_" + "_".join(sorted_fishes)
-        recipes = load_recipes()
-
-        if recipe_key in recipes and len(recipes[recipe_key]) > 0:
-            select_view = SelectRecipeView(
-                author=self.author,
-                recipe_key=recipe_key,
-                existing_list=recipes[recipe_key],
-                appliance=self.selected_appliance,
-                selected_fishes=self.selected_fishes,
-            )
-            await interaction.response.send_message(
-                f"🍳 **{', '.join(self.selected_fishes)}** で調理開始！\n"
-                "💡 この組み合わせのレシピがすでに存在します！\n"
-                "既存の料理を作るか、新しく料理名を考案するか選んでください！",
-                view=select_view,
-                ephemeral=True,
-            )
-        else:
-            modal = NameDishModal(
-                recipe_key=recipe_key,
-                appliance=self.selected_appliance,
-                selected_fishes=self.selected_fishes,
-                user=self.author,
-            )
-            await interaction.response.send_modal(modal)
+        # 🔥 ボタンを押した瞬間に未応答のインタラクションでモーダルを立ち上げる！
+        await interaction.response.send_modal(DishNameModal(self))
 
 
 
@@ -1108,6 +1045,12 @@ class BuySeasoningView(discord.ui.View):
         "砂糖": [15, "甘くておいしい砂糖。煮物のコク出しにも！", "🍬"],
         "マヨネーズ": [30, "何にかけても美味しくなる魔法の調味料！", "🧴"],
         "唐辛子": [25, "ピリッと辛いアクセント。辛党向け！", "🌶️"],
+        # 🌟 ここから新しい調味料を追加！
+        "味噌": [25, "深みとコクを出す伝統の味。汁物や焼き物に！", "🥣"],
+        "ケチャップ": [20, "甘酸っぱい洋風の定番。子どもにも大人気！", "🍅"],
+        "わさび": [30, "ツーンと鼻に抜ける爽快な辛み。刺身の相棒！", "🥬"],
+        "みりん": [20, "照りとまろやかな甘みを加える和食の必需品！", "🍶"],
+        "ラー油": [25, "香ばしい胡麻油の香りとピリ辛の刺激！", "🔥"],
     }
 
     def __init__(self, author, user_data):
@@ -2116,84 +2059,6 @@ async def cook(ctx):
 
     view = CookingView(author=ctx.author, user_data=user_data)
     await ctx.send("🍳 **クッキングタイム！** 器具と材料を選んでね！", view=view)
-
-# --------------------------------------------------
-# 📊 サーバ内ランキング コマンド
-# --------------------------------------------------
-@bot.hybrid_command(
-    name="rank",
-    aliases=["ランキング", "順位"],
-    description="サーバー内の所持金、大物記録ランキングを表示します",
-)
-async def rank_command(ctx):
-    users_data = load_user_data()
-    if not users_data:
-        await ctx.send("⚠️ まだユーザーデータがありません！")
-        return
-
-    # 1. 💰 所持金ランキング TOP5
-    coins_rank = sorted(
-        users_data.values(), key=lambda u: u.get("coins", 0), reverse=True
-    )[:5]
-
-    # 2. 🐟 大物ランキング TOP5（小数点2桁！）
-    biggest_fish_list = []
-    for u in users_data.values():
-        user_name = u.get("name", "Unknown")
-        max_size = 0.0
-        best_fish_name = ""
-
-        inventory = u.get("inventory", {})
-        for fish_name, f_data in inventory.items():
-            f_max = f_data.get("max_size", 0.0)
-            if f_max > max_size:
-                max_size = f_max
-                best_fish_name = fish_name
-
-        if max_size > 0:
-            biggest_fish_list.append(
-                {
-                    "name": user_name,
-                    "fish": best_fish_name,
-                    "size": max_size,
-                }
-            )
-
-    fish_rank = sorted(
-        biggest_fish_list, key=lambda x: x["size"], reverse=True
-    )[:5]
-
-    # 📊 Embed の組み立て
-    embed = discord.Embed(
-        title="🏆 サーバ内ランキング TOP 5",
-        color=discord.Color.gold(),
-    )
-
-    # 富豪部門
-    money_text = ""
-    for i, u in enumerate(coins_rank, 1):
-        medal = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i - 1]
-        money_text += f"{medal} **{u.get('name', 'Unknown')}**: {u.get('coins', 0):,} NP\n"
-    embed.add_field(
-        name="💰 富豪ランキング",
-        value=money_text if money_text else "データがありません",
-        inline=False,
-    )
-
-    # 大物部門（小数点2桁）
-    fish_text = ""
-    for i, item in enumerate(fish_rank, 1):
-        medal = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i - 1]
-        fish_text += f"{medal} **{item['name']}**: {item['fish']} **{item['size']:.2f} cm**\n"
-    embed.add_field(
-        name="🐟 釣りの大物記録",
-        value=fish_text if fish_text else "まだ誰も魚を釣っていません",
-        inline=False,
-    )
-
-    # 🌟 送信＆閉じるボタン
-    view = DeleteMessageView(author=ctx.author)
-    await ctx.send(embed=embed, view=view)
 
 
 # 4. レシピ図鑑コマンド
