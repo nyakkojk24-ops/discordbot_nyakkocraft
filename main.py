@@ -60,7 +60,7 @@ def save_user_data(data):
 
 # 🥗 収穫処理の共通ロジック
 async def do_farm_logic(interaction: discord.Interaction):
-    json_path = os.path.join(base_dir, "jsonall", "veggies.json")
+    json_path = os.path.join(base_dir, "jsonall", "crops.json")
     with open(json_path, "r", encoding="utf-8") as f:
         all_veggies = json.load(f)
 
@@ -242,7 +242,7 @@ async def do_farm_logic_edit(
     current_hoe = user["durability"]["hoe"]
 
     # 野菜の抽選
-    json_path = os.path.join(base_dir, "jsonall", "veggies.json")
+    json_path = os.path.join(base_dir, "jsonall", "crops.json")
     with open(json_path, "r", encoding="utf-8") as f:
         all_veggies = json.load(f)
 
@@ -661,6 +661,21 @@ class CookingView(discord.ui.View):
                     description="切り分けて刺身やタタキにする",
                     emoji="🔪",
                 ),
+                discord.SelectOption(
+                    label="オーブン",
+                    description="ふっくら・こんがりと焼き上げる",
+                    emoji="🔥",
+                ),
+                discord.SelectOption(
+                    label="蒸し器",
+                    description="蒸気で旨味を閉じ込めてふっくら蒸しあげる",
+                    emoji="💨",
+                ),
+                discord.SelectOption(
+                    label="網焼きグリル",
+                    description="直火で香ばしく焼き目をつける",
+                    emoji="🍖",
+),
             ],
         )
         appliance_select.callback = self.on_appliance_select
@@ -668,6 +683,8 @@ class CookingView(discord.ui.View):
 
         # 素材・料理の混合選択肢を作成
         ingredient_options = []
+        print("=== DEBUG COOKING ===")
+        print("読み込んだseasonings:", user_data.get("seasonings", {}))
 
         # ① 魚を追加
         for name, data in user_inventory.items():
@@ -689,6 +706,17 @@ class CookingView(discord.ui.View):
                     )
                 )
 
+        user_seasonings = user_data.get("seasonings", {})
+        for name, count in user_seasonings.items():
+            if count > 0:
+                ingredient_options.append(
+                    discord.SelectOption(
+                        label=f"🧂 {name} (所持: {count}個)",
+                        value=name,
+                        description="市場で購入した調味料",
+            )
+        )
+
         # ③ 料理（中間素材）を追加
         for name, count in user_dishes.items():
             if count > 0:
@@ -697,15 +725,6 @@ class CookingView(discord.ui.View):
                         label=f"🍳 {name} ({count}個所持)", value=name
                     )
                 )
-
-        user_seasonings = user_data.get("seasonings", {})
-        for name, count in user_seasonings.items():
-            if count > 0:
-                ingredient_options.append(
-                    discord.SelectOption(
-                        label=f"🧂 {name} ({count}個所持)", value=name
-            )
-        )
 
         if ingredient_options:
             ingredient_select = discord.ui.Select(
@@ -716,6 +735,8 @@ class CookingView(discord.ui.View):
             )
             ingredient_select.callback = self.on_fish_select
             self.add_item(ingredient_select)
+            
+            
 
     async def on_appliance_select(self, interaction: discord.Interaction):
         if interaction.user.id != self.author.id:
@@ -1200,7 +1221,7 @@ class ShopView(discord.ui.View):
         sold_veggies_count = 0
 
         json_path_fish = os.path.join(base_dir, "jsonall", "fishes.json")
-        json_path_veg = os.path.join(base_dir, "jsonall", "veggies.json")
+        json_path_veg = os.path.join(base_dir, "jsonall", "crops.json")
 
         all_fishes = {}
         all_veggies = {}
@@ -1325,7 +1346,7 @@ class MainMenuView(discord.ui.View):
         await do_fish_logic_edit(interaction, self)
 
     @discord.ui.button(
-        label="🥗 野菜収穫", style=discord.ButtonStyle.success, row=0
+        label="🍎 陸の恵み（収穫）", style=discord.ButtonStyle.success, row=0
     )
     async def btn_farm(
         self, interaction: discord.Interaction, button: discord.ui.Button
@@ -1356,13 +1377,18 @@ class MainMenuView(discord.ui.View):
     async def btn_cook(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        user_id = str(self.author.id)
+        # 🌟 ここで最新のユーザーデータをJSONから読み直す！
         users_data = load_user_data()
-        user_data = users_data.get(user_id, {})
+        user_data = users_data.get(str(self.author.id), {})
 
+        # 最新の user_data を渡して View を作成
         view = CookingView(author=self.author, user_data=user_data)
-        await interaction.response.send_message(
-            "🍳 調理器具と使う材料を選んでください！", view=view, ephemeral=True
+
+        # メインメニューを料理画面に上書き編集（または send_message）
+        await interaction.response.edit_message(
+            content="🍳 **調理器具と使う材料を選んでください！**",
+            embed=None,
+            view=view,
         )
 
     @discord.ui.button(
@@ -1743,11 +1769,11 @@ async def sell_item(ctx):
     description="野菜を収穫します",
 )
 async def harvest_veggies(ctx):
-    json_path = os.path.join(base_dir, "jsonall", "veggies.json")
+    json_path = os.path.join(base_dir, "jsonall", "crops.json")
 
     if not os.path.exists(json_path):
         await ctx.send(
-            "⚠️ `jsonall/veggies.json` が見つかりません！ファイルを作成してください！"
+            "⚠️ `jsonall/crops.json` が見つかりません！ファイルを作成してください！"
         )
         return
 
