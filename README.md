@@ -1,1 +1,6 @@
 # discordbot_nyakkocraft
+
+こんちゃーにゃっこだよー
+今回はbotを作ったよー
+導入したい方はdiscordのここにDMしてねー
+niyatsuko_69857
