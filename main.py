@@ -738,27 +738,34 @@ class DishNameModal(discord.ui.Modal, title="🍳 料理の名前を決めよう
         if "inventory" not in users_data[user_id]:
             users_data[user_id]["inventory"] = {}
 
-        # 🥩 素材の消費処理
+        # 🥩 素材の消費処理（判定を厳格化）
         for item in selected_fishes:
-            if item in users_data[user_id].get("inventory", {}):
-                sizes = users_data[user_id]["inventory"][item].get("sizes", [])
-                if sizes:
-                    sizes.pop(0)
-            elif item in users_data[user_id].get("veggies", {}):
-                if users_data[user_id]["veggies"][item] > 0:
-                    users_data[user_id]["veggies"][item] -= 1
-            elif item in users_data[user_id].get("seafood", {}):
-                if users_data[user_id]["seafood"][item] > 0:
-                    users_data[user_id]["seafood"][item] -= 1
-            elif item in users_data[user_id].get("meats", {}):
-                if users_data[user_id]["meats"][item] > 0:
-                    users_data[user_id]["meats"][item] -= 1
-            elif item in users_data[user_id].get("seasonings", {}):
-                if users_data[user_id]["seasonings"][item] > 0:
-                    users_data[user_id]["seasonings"][item] -= 1
-            elif item in users_data[user_id].get("dishes", {}):
-                if users_data[user_id]["dishes"][item] > 0:
-                    users_data[user_id]["dishes"][item] -= 1
+            # 🐟 魚（sizesが存在する場合のみ消費）
+            if (
+                item in users_data[user_id].get("inventory", {})
+                and len(users_data[user_id]["inventory"][item].get("sizes", [])) > 0
+            ):
+                users_data[user_id]["inventory"][item]["sizes"].pop(0)
+
+            # 🥗 野菜
+            elif users_data[user_id].get("veggies", {}).get(item, 0) > 0:
+                users_data[user_id]["veggies"][item] -= 1
+
+            # 🤿 海産物
+            elif users_data[user_id].get("seafood", {}).get(item, 0) > 0:
+                users_data[user_id]["seafood"][item] -= 1
+
+            # 🥩 お肉
+            elif users_data[user_id].get("meats", {}).get(item, 0) > 0:
+                users_data[user_id]["meats"][item] -= 1
+
+            # 🧂 調味料（★ここへ確実に到達するように修正！）
+            elif users_data[user_id].get("seasonings", {}).get(item, 0) > 0:
+                users_data[user_id]["seasonings"][item] -= 1
+
+            # 🍳 料理
+            elif users_data[user_id].get("dishes", {}).get(item, 0) > 0:
+                users_data[user_id]["dishes"][item] -= 1
 
         # 価格計算とユーザーが入力した名前で保存！
         base_price = 100
@@ -1161,10 +1168,10 @@ class BuySeasoningView(discord.ui.View):
     @discord.ui.button(
         label="❌ 閉じる", style=discord.ButtonStyle.secondary, row=2
     )
-    async def btn_close(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        await interaction.message.delete()
+# ⭕ エフェメラルメッセージでもエラーにならない書き方
+    async def btn_close(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # delete_original_response を使う
+        await interaction.delete_original_response()
 
 
 # --------------------------------------------------
@@ -1577,6 +1584,48 @@ class ShopView(discord.ui.View):
             ephemeral=True,
         )
 
+    # --- 🌾 お米の購入ボタン -------------------
+    @discord.ui.button(
+        label="🌾 お米を購入 (30 NP)",
+        style=discord.ButtonStyle.success,
+        row=1,  # 配置したい行（row）に合わせて変更してください
+    )
+    async def buy_rice(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
+        user = users_data.get(str(self.author.id), {})
+        coins = user.get("coins", 0)
+
+        price = 35  # お米の価格（お好みで調整してください）
+
+        # 1. 所持金のチェック
+        if coins < price:
+            await interaction.response.send_message(
+                f"❌ **NPが足りません！**（必要: {price} NP）", ephemeral=True
+            )
+            return
+
+        # 2. NPを減らしてお米を増やす
+        user["coins"] -= price
+
+        if "veggies" not in user:
+            user["veggies"] = {}
+
+        # お米の数を+1
+        user["veggies"]["お米"] = user["veggies"].get("お米", 0) + 1
+
+        # 3. 🌟 変更データを保存！
+        save_user_data(guild_id, users_data)
+
+        # 4. メッセージを送信
+        await interaction.response.send_message(
+            f"🌾 **お米** を1個購入しました！ (所持: {user['veggies']['お米']}個)\n"
+            f"💰 残高: **{user['coins']} NP**",
+            ephemeral=True,
+        )
+
     # --- 3段目 (row=2): ナビゲーション -----------------
     @discord.ui.button(
         label="↩️ メニューに戻る", style=discord.ButtonStyle.secondary, row=2
@@ -1794,7 +1843,8 @@ class MainMenuView(discord.ui.View):
     async def btn_recipes(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        recipes = load_recipes()
+        guild_id = interaction.guild_id or "dm"
+        recipes = load_recipes(guild_id)
         embed = discord.Embed(
             title="📖 発見済み料理レシピ図鑑", color=discord.Color.gold()
         )
