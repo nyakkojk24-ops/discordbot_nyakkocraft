@@ -1019,7 +1019,8 @@ class CatchOrReleaseView(discord.ui.View):
         if self.is_new_record:
             inventory[self.fish_name]["max_size"] = self.size
 
-        save_user_data(self.guild_id, self.users_data)
+        guild_id = interaction.guild_id or "dm"
+        save_user_data(guild_id, self.users_data)
         count = len(inventory[self.fish_name]["sizes"])
 
         main_view = MainMenuView(author=self.author)
@@ -1136,7 +1137,8 @@ class BuySeasoningView(discord.ui.View):
     async def open_select_sell(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user = users_data.get(str(self.author.id), {})
 
         # 個別売却用ドロップダウンViewを表示
@@ -1290,7 +1292,8 @@ class IndividualSellView(discord.ui.View):
     async def on_select_sell(self, interaction: discord.Interaction):
         selected_value = interaction.data["values"][0]
 
-        users_data = load_user_data()
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
         user = users_data.get(str(self.author.id), {})
 
         earned = 0
@@ -1320,8 +1323,10 @@ class IndividualSellView(discord.ui.View):
 
         if earned > 0:
             user["coins"] = user.get("coins", 0) + earned
-            guild_id = interaction.guild_id or "dm"
-            users_data = load_user_data(guild_id)
+            
+            # 🌟 変更したデータ（users_data）をファイルに保存する！
+            save_user_data(guild_id, users_data)
+
             await interaction.response.send_message(
                 f"💵 **{item_name}** を売却しました！\n"
                 f"売却額: **+{earned} NP** (所持金: **{user['coins']} NP**)",
@@ -1331,7 +1336,6 @@ class IndividualSellView(discord.ui.View):
             await interaction.response.send_message(
                 "❌ 在庫がありません！", ephemeral=True
             )
-
 # --------------------------------------------------
 # 🛒 市場・ショップ View（レイアウト整列＆閉じる/戻るボタン復活版）
 # --------------------------------------------------
@@ -1581,17 +1585,7 @@ class ShopView(discord.ui.View):
             embed=None,
             view=main_view,
         )
-
-    @discord.ui.button(
-        label="❌ 閉じる", style=discord.ButtonStyle.danger, row=2
-    )
-    async def btn_close(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        self.stop()
-        await interaction.message.delete()    
-
-
+    
 # --------------------------------------------------
 # 📋 デイリークエスト View
 # --------------------------------------------------
