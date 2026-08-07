@@ -48,3 +48,10 @@ Discordサーバーで**料理・釣り・野菜収穫・図鑑コンプリー�
 - **Language**: Python 3.14+
 - **Library**: `discord.py` (v2.0+)
 - **Data Persistence**: JSON (Guild-based modular storage)
+
+---
+
+## 導入方法
+
+- 以下のアカウント(discord)にDMしてください！
+- niyatsuko_69857
