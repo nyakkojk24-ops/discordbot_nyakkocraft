@@ -2561,4 +2561,19 @@ async def on_ready():
     except Exception as e:
         print(f"Failed to sync commands: {e}")
 
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+
+    # 「にク」「にく」「ニク」のどれが含まれていても反応するように設定
+    text = message.content.lower()
+    if any(k in text for k in ["にク", "にく", "ニク",]):
+        ctx = await bot.get_context(message)
+        await start_menu(ctx)
+        return
+
+    await bot.process_commands(message)
+
 bot.run(TOKEN)
