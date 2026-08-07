@@ -1371,8 +1371,9 @@ class ShopView(discord.ui.View):
             user["durability"] = {}
         user["durability"]["fishing_rod"] = 10
 
-        guild_id = interaction.guild_id or "dm"
-        users_data = load_user_data(guild_id)
+        # 🌟 ここでしっかりファイルに保存！
+        save_user_data(guild_id, users_data)
+
         await interaction.response.send_message(
             f"✨ **釣竿を修理しました！** (耐久: 10/10)\n💰 残高: **{user['coins']} NP**",
             ephemeral=True,
@@ -1402,8 +1403,9 @@ class ShopView(discord.ui.View):
             user["durability"] = {}
         user["durability"]["hoe"] = 10
 
-        guild_id = interaction.guild_id or "dm"
-        users_data = load_user_data(guild_id)
+        # 🌟 ここでしっかりファイルに保存！
+        save_user_data(guild_id, users_data)
+
         await interaction.response.send_message(
             f"✨ **クワを修理しました！** (耐久: 10/10)\n💰 残高: **{user['coins']} NP**",
             ephemeral=True,
@@ -1433,8 +1435,9 @@ class ShopView(discord.ui.View):
             user["durability"] = {}
         user["durability"]["spear"] = 10
 
-        guild_id = interaction.guild_id or "dm"
-        users_data = load_user_data(guild_id)
+        # 🌟 ここでしっかりファイルに保存！
+        save_user_data(guild_id, users_data)
+
         await interaction.response.send_message(
             f"✨ **ヤスを修理しました！** (耐久: 10/10)\n💰 残高: **{user['coins']} NP**",
             ephemeral=True,
@@ -1512,9 +1515,11 @@ class ShopView(discord.ui.View):
             )
             return
 
+        # 所持金を加算
         user["coins"] = user.get("coins", 0) + total_earned
-        guild_id = interaction.guild_id or "dm"
-        users_data = load_user_data(guild_id)
+
+        # 🌟 1. 直前の load_user_data は削除し、しっかり保存する！
+        save_user_data(guild_id, users_data)
 
         # 画面の所持金表示も即座に更新！
         await interaction.response.edit_message(
