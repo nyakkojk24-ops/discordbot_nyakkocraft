@@ -224,3 +224,4 @@ jsonall/
 
 # ユーザーの所持品データ（非公開）
 data/
+realjsonalld\map_master.json

@@ -5,6 +5,7 @@ import random
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+from realism import RealismMainView
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -2000,6 +2001,27 @@ class MainMenuView(discord.ui.View):
         view = DeleteMessageView(author=self.author)
         await interaction.response.send_message(
             embed=embed, view=view, ephemeral=True
+        )
+
+    # MainMenuView の中に追加
+    @discord.ui.button(label="🏙️ 現実化モード", style=discord.ButtonStyle.danger, row=2)
+    async def btn_realism_mode(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message("❌ 他の人の操作はできません！", ephemeral=True)
+            return
+
+        guild_id = interaction.guild_id or "dm"
+        users_data = load_user_data(guild_id)
+        user = users_data.get(str(interaction.user.id), {})
+
+        await interaction.response.edit_message(
+            content=(
+                f"📍 **現在地**: 🏙️ 現実化エリア（開発特区）\n"
+                f"💰 所持金: **{user.get('coins', 0):,} NP**\n\n"
+                f"🏙️ **【現実化モードへようこそ！】**\n"
+                f"ここから土地の購入・採掘・会社経営などが楽しめます。"
+            ),
+            view=RealismMainView(author=interaction.user, user_data=user)
         )
 
 
