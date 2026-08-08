@@ -83,12 +83,11 @@ def load_seafood():
         return json.load(f)
 
 
-def get_daily_quest(user_data):
-    today_str = datetime.date.today().isoformat()
-    quest_info = user_data.get("daily_quest", {})
+def get_daily_quest(user_data, guild_id="dm"):
+    # 🌟 今日の日付（YYYY-MM-DD）を取得するコードを追加！
+    today_str = datetime.date.today().strftime("%Y-%m-%d")
 
-    # 1. 発見済みレシピ（recipes.json）を読み込む
-    recipes = load_recipes()  # 既存のレシピ読み込み関数
+    recipes = load_recipes(guild_id)
     discovered_recipes = list(recipes.keys())
 
     # 2. レシピが10種類未満の場合は「ロック状態」を返す
@@ -1866,18 +1865,12 @@ class MainMenuView(discord.ui.View):
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(
-        label="📋 本日のリクエスト",
-        style=discord.ButtonStyle.primary,
-        row=1,
-    )
-    async def btn_quest(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
+    @discord.ui.button(label="📋 本日のリクエスト", style=discord.ButtonStyle.primary, row=1)
+    async def btn_quest(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild_id = interaction.guild_id or "dm"
         users_data = load_user_data(guild_id)
         user_data = users_data.get(str(self.author.id), {})
-        q_data = get_daily_quest(user_data)
+        q_data = get_daily_quest(user_data, guild_id)
         guild_id = interaction.guild_id or "dm"
         users_data = load_user_data(guild_id)
 
